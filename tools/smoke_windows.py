@@ -1,4 +1,4 @@
-"""Development-only startup and transport tests of the deployed executable."""
+"""Development-only startup, transport, video, and shutdown tests of the deployed executable."""
 import ctypes
 import json
 import os
@@ -10,14 +10,121 @@ import wave
 
 bundle, evidence = (Path(p).resolve() for p in sys.argv[1:3])
 evidence.mkdir(parents=True, exist_ok=True)
-fixture = evidence / "generated audio.wav"
+audio_fixture = evidence / "generated audio.wav"
+video_fixture = evidence / "generated video.avi"
+
 # Generated silence: no third-party media and no speaker noise on CI.
-with wave.open(str(fixture), "wb") as out:
+with wave.open(str(audio_fixture), "wb") as out:
     out.setparams((1, 2, 48000, 0, "NONE", "not compressed"))
     out.writeframes(struct.pack("<h", 0) * (48000 * 8))
+
+
+def riff_chunk(tag, data):
+    if len(tag) != 4:
+        raise ValueError("RIFF chunk IDs must be four bytes")
+    return tag + struct.pack("<I", len(data)) + data + (b"\0" if len(data) & 1 else b"")
+
+
+def riff_list(list_type, chunks):
+    body = list_type + b"".join(chunks)
+    return b"LIST" + struct.pack("<I", len(body)) + body + (b"\0" if len(body) & 1 else b"")
+
+
+def write_test_avi(path, width=64, height=64, fps=30, seconds=4):
+    """Write a tiny standards-compliant uncompressed AVI using only Python's stdlib.
+
+    The moving BGR24 pattern gives libVLC a real video stream without downloading media or
+    introducing FFmpeg as a CI dependency. Positive DIB height means rows are stored bottom-up.
+    """
+    row_stride = ((width * 3 + 3) // 4) * 4
+    frame_size = row_stride * height
+    total_frames = fps * seconds
+
+    avih = struct.pack(
+        "<IIIIIIIIII4I",
+        1_000_000 // fps,
+        frame_size * fps,
+        0,
+        0,
+        total_frames,
+        0,
+        1,
+        frame_size,
+        width,
+        height,
+        0,
+        0,
+        0,
+        0,
+    )
+    strh = struct.pack(
+        "<4s4sIHHIIIIIIIIhhhh",
+        b"vids",
+        b"DIB ",
+        0,
+        0,
+        0,
+        0,
+        1,
+        fps,
+        0,
+        total_frames,
+        frame_size,
+        0xFFFFFFFF,
+        0,
+        0,
+        0,
+        width,
+        height,
+    )
+    strf = struct.pack(
+        "<IiiHHIIiiII",
+        40,
+        width,
+        height,
+        1,
+        24,
+        0,
+        frame_size,
+        0,
+        0,
+        0,
+        0,
+    )
+    hdrl = riff_list(
+        b"hdrl",
+        [
+            riff_chunk(b"avih", avih),
+            riff_list(b"strl", [riff_chunk(b"strh", strh), riff_chunk(b"strf", strf)]),
+        ],
+    )
+
+    frames = []
+    for frame_no in range(total_frames):
+        pixels = bytearray()
+        for y in range(height - 1, -1, -1):
+            row = bytearray()
+            for x in range(width):
+                r = (x * 4 + frame_no * 3) & 0xFF
+                g = (y * 4 + frame_no * 5) & 0xFF
+                b = ((x + y) * 2 + frame_no * 7) & 0xFF
+                row.extend((b, g, r))
+            row.extend(b"\0" * (row_stride - width * 3))
+            pixels.extend(row)
+        frames.append(riff_chunk(b"00db", bytes(pixels)))
+
+    movi = riff_list(b"movi", frames)
+    body = b"AVI " + hdrl + movi
+    path.write_bytes(b"RIFF" + struct.pack("<I", len(body)) + body)
+
+
+write_test_avi(video_fixture)
+
 env = dict(os.environ)
 # Strip the developer Qt kit from PATH so missing shipped DLLs cannot pass by accident.
-env["PATH"] = os.pathsep.join(p for p in env.get("PATH", "").split(os.pathsep) if "qt" not in p.lower())
+env["PATH"] = os.pathsep.join(
+    p for p in env.get("PATH", "").split(os.pathsep) if "qt" not in p.lower()
+)
 for key in ("QT_PLUGIN_PATH", "QML2_IMPORT_PATH", "QML_IMPORT_PATH", "APERTURE_LIBVLC_PATH"):
     env.pop(key, None)
 # GitHub-hosted Windows runners have no default audio endpoint. Aperture's backend recognizes
@@ -46,13 +153,13 @@ BACKEND_FAILURES = {
 }
 
 
-def libvlc_media_probe():
+def libvlc_media_probe(media_file):
     """Independently exercise the packaged libVLC path/location constructors.
 
     This deliberately bypasses Aperture's Rust FFI. If both layers fail identically, the problem
     is in libVLC/path semantics or packaging; if ctypes succeeds, our Rust boundary is suspect.
     """
-    report = {"fixture": str(fixture), "fixture_uri": fixture.as_uri(), "cases": []}
+    report = {"fixture": str(media_file), "fixture_uri": media_file.as_uri(), "cases": []}
     dll_dir = None
     instance = None
     try:
@@ -88,11 +195,11 @@ def libvlc_media_probe():
             report["instance_error"] = raw.decode("utf-8", "replace") if raw else "unknown"
             return report
 
-        native = str(fixture)
+        native = str(media_file)
         cases = [
             ("path-native", vlc.libvlc_media_new_path, native),
             ("path-forward-slash", vlc.libvlc_media_new_path, native.replace("\\", "/")),
-            ("location-file-uri", vlc.libvlc_media_new_location, fixture.as_uri()),
+            ("location-file-uri", vlc.libvlc_media_new_location, media_file.as_uri()),
         ]
         for name, constructor, value in cases:
             if clearerr is not None:
@@ -120,26 +227,58 @@ def libvlc_media_probe():
 
 results = []
 tests = [
-    ("startup", []),
+    ("startup", [], None),
     (
         "audio-transport",
-        ["--smoke-media", fixture.as_uri(), "--smoke-no-mixer"],
+        ["--smoke-media", audio_fixture.as_uri(), "--smoke-no-mixer"],
+        audio_fixture,
     ),
     (
         "close-during-playback",
         [
             "--smoke-media",
-            fixture.as_uri(),
+            audio_fixture.as_uri(),
             "--smoke-no-mixer",
             "--smoke-close-while-playing",
         ],
+        audio_fixture,
+    ),
+    (
+        "video-playback",
+        [
+            "--smoke-media",
+            video_fixture.as_uri(),
+            "--smoke-no-mixer",
+            "--smoke-basic-playback",
+            "--smoke-expect-video",
+        ],
+        video_fixture,
+    ),
+    (
+        "close-during-video-playback",
+        [
+            "--smoke-media",
+            video_fixture.as_uri(),
+            "--smoke-no-mixer",
+            "--smoke-close-while-playing",
+            "--smoke-expect-video",
+        ],
+        video_fixture,
     ),
 ]
-for name, args in tests:
+for name, args, media_file in tests:
     cmd = [str(bundle / "aperture.exe"), "--smoke-test", *args]
     try:
-        run = subprocess.run(cmd, cwd=bundle, env=env, capture_output=True, text=True,
-                             encoding="utf-8", errors="replace", timeout=30)
+        run = subprocess.run(
+            cmd,
+            cwd=bundle,
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
         log = run.stdout + run.stderr
         passed = run.returncode == 0
         if "Binding loop" in log or "ReferenceError" in log or "TypeError" in log:
@@ -149,10 +288,10 @@ for name, args in tests:
             result["failed_stage"] = run.returncode - 20
         if not passed and run.returncode in BACKEND_FAILURES:
             result["backend_failure"] = BACKEND_FAILURES[run.returncode]
-        if not passed and run.returncode == 49:
-            probe = libvlc_media_probe()
+        if not passed and run.returncode == 49 and media_file is not None:
+            probe = libvlc_media_probe(media_file)
             result["libvlc_media_probe"] = probe
-            (evidence / "libvlc-media-probe.json").write_text(
+            (evidence / f"{name}-libvlc-media-probe.json").write_text(
                 json.dumps(probe, indent=2), encoding="utf-8"
             )
             print("libVLC media probe:", json.dumps(probe, indent=2), flush=True)
@@ -166,5 +305,6 @@ for name, args in tests:
     if not passed:
         print(results[-1], flush=True)
         print(log, flush=True)
+
 (evidence / "smoke-results.json").write_text(json.dumps(results, indent=2), encoding="utf-8")
 sys.exit(0 if all(r["passed"] for r in results) else 1)
