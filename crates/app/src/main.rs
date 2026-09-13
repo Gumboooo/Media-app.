@@ -1,15 +1,23 @@
 mod player_controller;
 
-use cxx_qt_lib::{QCoreApplication, QGuiApplication, QQmlApplicationEngine, QUrl};
+use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QUrl};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 fn main() -> std::process::ExitCode {
     let mut app = QGuiApplication::new();
+    let Some(mut app_ref) = app.as_mut() else {
+        eprintln!("Aperture could not create the Qt GUI application.");
+        return std::process::ExitCode::FAILURE;
+    };
 
-    QCoreApplication::set_organization_name(&"Aperture Project".into());
-    QCoreApplication::set_application_name(&"Aperture".into());
-    QCoreApplication::set_application_version(&env!("CARGO_PKG_VERSION").into());
+    app_ref
+        .as_mut()
+        .set_organization_name(&"Aperture Project".into());
+    app_ref.as_mut().set_application_name(&"Aperture".into());
+    app_ref
+        .as_mut()
+        .set_application_version(&env!("CARGO_PKG_VERSION").into());
 
     let smoke = std::env::args().any(|arg| arg == "--smoke-test");
     let root_url = QUrl::from(if smoke {
@@ -36,8 +44,6 @@ fn main() -> std::process::ExitCode {
         return std::process::ExitCode::FAILURE;
     }
 
-    if let Some(app) = app.as_mut() {
-        app.exec();
-    }
+    app_ref.exec();
     std::process::ExitCode::SUCCESS
 }
