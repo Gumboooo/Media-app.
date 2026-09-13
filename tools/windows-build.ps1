@@ -29,10 +29,28 @@ try {
     if ($LASTEXITCODE) { throw 'Release build failed.' }
     Copy-Item 'target/release/aperture.exe' $bundle -Force
 
-    # Aperture is English-only today. Shipping Qt's complete translation catalog adds several MiB
-    # without exposing any translated application UI, so omit it until localization is implemented.
-    & (Join-Path $env:QT_ROOT_DIR 'bin/windeployqt.exe') --release --compiler-runtime --no-translations --qmldir 'crates/app/qml' --dir $bundle (Join-Path $bundle 'aperture.exe')
+    # This artifact is a portable development bundle, not the final installer. Avoid embedding the
+    # full Visual C++ Redistributable installer and deploy the licensed CRT DLLs app-locally instead.
+    # The future production installer can use Microsoft's preferred central redistributable flow.
+    & (Join-Path $env:QT_ROOT_DIR 'bin/windeployqt.exe') --release --no-compiler-runtime --no-translations --qmldir 'crates/app/qml' --dir $bundle (Join-Path $bundle 'aperture.exe')
     if ($LASTEXITCODE) { throw 'Qt dependency deployment failed.' }
+
+    if (!$env:VCToolsRedistDir) { throw 'Visual C++ redistributable directory was not exposed by the MSVC developer shell.' }
+    $vcRedistX64 = Join-Path $env:VCToolsRedistDir 'x64'
+    $crtDirectories = @(Get-ChildItem $vcRedistX64 -Directory | Where-Object { $_.Name -match '^Microsoft\.VC\d+\.CRT$' })
+    if ($crtDirectories.Count -ne 1) {
+        throw "Cannot uniquely identify the x64 Visual C++ CRT redistributable directory under $vcRedistX64."
+    }
+    $crtDlls = @(Get-ChildItem $crtDirectories[0].FullName -File -Filter '*.dll')
+    if ($crtDlls.Count -eq 0) { throw 'No app-local Visual C++ CRT DLLs were found.' }
+    Copy-Item $crtDlls.FullName $bundle -Force
+    $crtBytes = [long](($crtDlls | Measure-Object -Property Length -Sum).Sum)
+    [PSCustomObject]@{
+        Source = $crtDirectories[0].FullName
+        Files = $crtDlls.Count
+        Bytes = $crtBytes
+        Names = @($crtDlls.Name | Sort-Object)
+    } | ConvertTo-Json -Depth 3 | Out-File (Join-Path $evidence 'msvc-app-local-runtime.json')
 
     # windeployqt includes the QML debugger/profiler plugins because QtQml supports them. The
     # release executable does not enable QML debugging, so these tools are not runtime dependencies.
@@ -71,6 +89,30 @@ try {
     if (@(Get-ChildItem $bundle -File -Filter '*.lib').Count -ne 0) { throw 'Development-only libVLC import libraries leaked into the bundle.' }
     if (Test-Path $qmlTooling) { throw 'QML debugging plugins leaked into the release bundle.' }
     if (Test-Path (Join-Path $bundle 'translations')) { throw 'Qt translations leaked into the English-only bundle.' }
+    if (Test-Path (Join-Path $bundle 'vc_redist.x64.exe')) { throw 'The portable bundle still contains the full Visual C++ Redistributable installer.' }
+
+    # Smoke tests run on a hosted Windows image that already has MSVC runtimes installed, so a launch
+    # alone cannot prove portability. Inspect every packaged PE binary and require every directly
+    # imported MSVC runtime DLL to also exist app-locally beside aperture.exe.
+    $requiredMsvcRuntime = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    $peFiles = @(Get-ChildItem $bundle -Recurse -File | Where-Object { $_.Extension -in '.exe', '.dll' })
+    foreach ($peFile in $peFiles) {
+        $dependencyLines = & dumpbin.exe /DEPENDENTS $peFile.FullName 2>$null
+        foreach ($line in $dependencyLines) {
+            $dependency = $line.Trim()
+            if ($dependency -match '^(?i:(?:msvcp|vcruntime|concrt|vcomp)\d+(?:_[A-Za-z0-9]+)?\.dll)$') {
+                [void]$requiredMsvcRuntime.Add($dependency)
+            }
+        }
+    }
+    $missingMsvcRuntime = @($requiredMsvcRuntime | Where-Object { !(Test-Path (Join-Path $bundle $_)) } | Sort-Object)
+    if ($missingMsvcRuntime.Count -ne 0) {
+        throw "Missing app-local MSVC runtime dependencies: $($missingMsvcRuntime -join ', ')"
+    }
+    [PSCustomObject]@{
+        Required = @($requiredMsvcRuntime | Sort-Object)
+        Missing = $missingMsvcRuntime
+    } | ConvertTo-Json -Depth 3 | Out-File (Join-Path $evidence 'msvc-runtime-dependency-check.json')
 
     $licenses = Join-Path $bundle 'licenses'
     New-Item -ItemType Directory -Force $licenses | Out-Null
