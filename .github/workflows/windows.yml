@@ -1,0 +1,45 @@
+name: Native Windows player
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install Qt 6.8.3
+        uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4
+        with:
+          version: '6.8.3'
+          arch: win64_msvc2022_64
+          cache: true
+      - name: Test, build, package, and smoke-test
+        shell: pwsh
+        run: ./tools/windows-build.ps1
+      - name: Keep build evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-build-evidence
+          path: |
+            build/evidence/
+            Cargo.lock
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Upload tested development bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: aperture-windows-x64-dev
+          path: build/aperture-windows-x64/
+          if-no-files-found: error
+          retention-days: 14

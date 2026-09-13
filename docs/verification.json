@@ -1,0 +1,6 @@
+{
+  "checks": [],
+  "status": "blocked",
+  "playback_tested": false,
+  "reason": "Rust/Cargo is not installed or not on PATH."
+}

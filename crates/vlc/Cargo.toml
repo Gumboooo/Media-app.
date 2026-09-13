@@ -1,0 +1,9 @@
+[package]
+name = "aperture-vlc"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+aperture-core = { path = "../core" }
+libloading.workspace = true
+thiserror.workspace = true
