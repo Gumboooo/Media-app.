@@ -1,7 +1,7 @@
 use aperture_core::{MediaRuntimeInfo, MediaSource, MediaTrack, PlaybackState};
 use aperture_vlc::{VideoTarget, VlcWorker};
-use cxx_qt_lib::{QString, QUrl};
 use cxx_qt::CxxQtType;
+use cxx_qt_lib::{QString, QUrl};
 use std::path::PathBuf;
 use std::pin::Pin;
 
@@ -23,6 +23,7 @@ pub mod qobject {
         #[qproperty(bool, playing)]
         #[qproperty(bool, polling_active, cxx_name = "pollingActive")]
         #[qproperty(bool, muted)]
+        #[qproperty(bool, shutdown_complete, cxx_name = "shutdownComplete")]
         #[qproperty(f64, position_ms, cxx_name = "positionMs")]
         #[qproperty(f64, duration_ms, cxx_name = "durationMs")]
         #[qproperty(i32, volume)]
@@ -85,6 +86,16 @@ pub mod qobject {
         fn clear_error(self: Pin<&mut PlayerController>);
 
         #[qinvokable]
+        #[cxx_name = "beginShutdown"]
+        fn begin_shutdown(self: Pin<&mut PlayerController>);
+
+        #[qinvokable]
+        #[cxx_name = "pollShutdown"]
+        fn poll_shutdown(self: Pin<&mut PlayerController>);
+
+        // Kept for deterministic test/process teardown. The normal window-close path uses the
+        // non-blocking beginShutdown()/pollShutdown() pair instead.
+        #[qinvokable]
         fn shutdown(self: Pin<&mut PlayerController>);
     }
 }
@@ -94,6 +105,7 @@ pub struct PlayerControllerRust {
     playing: bool,
     polling_active: bool,
     muted: bool,
+    shutdown_complete: bool,
     position_ms: f64,
     duration_ms: f64,
     volume: i32,
@@ -124,6 +136,7 @@ impl Default for PlayerControllerRust {
             playing: false,
             polling_active: false,
             muted: false,
+            shutdown_complete: true,
             position_ms: 0.0,
             duration_ms: 0.0,
             volume: 100,
@@ -155,7 +168,8 @@ impl qobject::PlayerController {
         // zero through to libVLC so it drops the stale native target before the HWND/view dies.
         self.as_mut().rust_mut().native_video_handle =
             (native_handle != 0).then_some(native_handle);
-        let result = self.rust()
+        let result = self
+            .rust()
             .backend
             .as_ref()
             .map(|backend| backend.set_video_target(video_target(native_handle)));
@@ -176,7 +190,12 @@ impl qobject::PlayerController {
 
         let path = PathBuf::from(local_path.to_string());
         // A failed loader must not leave a permanently disconnected worker in the controller.
-        if self.rust().backend.as_ref().is_some_and(VlcWorker::is_finished) {
+        if self
+            .rust()
+            .backend
+            .as_ref()
+            .is_some_and(VlcWorker::is_finished)
+        {
             self.as_mut().rust_mut().backend.take();
         }
         if self.rust().backend.is_none() {
@@ -184,6 +203,7 @@ impl qobject::PlayerController {
             match VlcWorker::spawn(target, *self.volume(), *self.muted()) {
                 Ok(backend) => {
                     self.as_mut().rust_mut().backend = Some(backend);
+                    self.as_mut().set_shutdown_complete(false);
                 }
                 Err(error) => {
                     self.set_fatal_error(&error.to_string());
@@ -205,8 +225,7 @@ impl qobject::PlayerController {
                 // Queue acceptance is not media-open success. Keep the requested source private
                 // until refresh() observes a confirmed playable state. This also means rapid
                 // A -> B requests can only commit B after all queued opens settle.
-                self.as_mut().rust_mut().pending_media =
-                    Some(MediaSource::local_file(path));
+                self.as_mut().rust_mut().pending_media = Some(MediaSource::local_file(path));
                 self.as_mut().reset_media_info();
                 self.as_mut().set_media_title(QString::default());
                 self.as_mut().set_media_path(QString::default());
@@ -222,8 +241,14 @@ impl qobject::PlayerController {
     }
 
     pub fn play_pause(mut self: Pin<&mut Self>) {
-        if !*self.has_media() { return; }
-        let result = self.rust().backend.as_ref().map(VlcWorker::toggle_playback);
+        if !*self.has_media() {
+            return;
+        }
+        let result = self
+            .rust()
+            .backend
+            .as_ref()
+            .map(VlcWorker::toggle_playback);
         match result {
             Some(Ok(())) => self.as_mut().set_polling_active(true),
             Some(Err(error)) => self.set_nonfatal_error(&error.to_string()),
@@ -276,7 +301,9 @@ impl qobject::PlayerController {
                 return;
             }
         }
-        if self.rust().backend.is_some() { self.as_mut().set_polling_active(true); }
+        if self.rust().backend.is_some() {
+            self.as_mut().set_polling_active(true);
+        }
         self.set_volume(volume);
     }
 
@@ -288,21 +315,25 @@ impl qobject::PlayerController {
                 return;
             }
         }
-        if self.rust().backend.is_some() { self.as_mut().set_polling_active(true); }
+        if self.rust().backend.is_some() {
+            self.as_mut().set_polling_active(true);
+        }
         self.set_muted(muted);
     }
 
     pub fn cycle_audio_track(mut self: Pin<&mut Self>) {
         let track_id = {
             let rust = self.rust();
-            let Some(next_index) = next_track_index(rust.selected_audio_index, rust.audio_tracks.len())
+            let Some(next_index) =
+                next_track_index(rust.selected_audio_index, rust.audio_tracks.len())
             else {
                 return;
             };
             rust.audio_tracks[next_index].id
         };
 
-        let result = self.rust()
+        let result = self
+            .rust()
             .backend
             .as_ref()
             .map(|backend| backend.set_audio_track(track_id));
@@ -329,7 +360,8 @@ impl qobject::PlayerController {
             rust.subtitle_tracks[next_index].id
         };
 
-        let result = self.rust()
+        let result = self
+            .rust()
             .backend
             .as_ref()
             .map(|backend| backend.set_subtitle_track(track_id));
@@ -425,12 +457,55 @@ impl qobject::PlayerController {
         self.as_mut().set_error_text(QString::default());
     }
 
+    pub fn begin_shutdown(mut self: Pin<&mut Self>) {
+        self.as_mut().set_polling_active(false);
+        self.as_mut().rust_mut().pending_media = None;
+
+        let has_backend = self.rust().backend.is_some();
+        if !has_backend {
+            self.as_mut().set_shutdown_complete(true);
+            return;
+        }
+
+        self.as_mut().set_shutdown_complete(false);
+        if let Some(backend) = self.as_mut().rust_mut().backend.as_mut() {
+            backend.begin_shutdown();
+        }
+    }
+
+    pub fn poll_shutdown(mut self: Pin<&mut Self>) {
+        if *self.shutdown_complete() {
+            return;
+        }
+
+        let finished = match self.as_mut().rust_mut().backend.as_mut() {
+            Some(backend) => backend.finish_shutdown(),
+            None => true,
+        };
+        if !finished {
+            return;
+        }
+
+        // The worker has released libVLC and its native-window references. Taking the backend is
+        // now an instant Drop, so Qt can safely destroy the WindowContainer immediately after.
+        self.as_mut().rust_mut().backend.take();
+        self.as_mut().set_playing(false);
+        self.as_mut().set_has_media(false);
+        self.as_mut().set_shutdown_complete(true);
+    }
+
     pub fn shutdown(mut self: Pin<&mut Self>) {
+        // Deterministic blocking shutdown remains useful for the smoke-test process, where the
+        // application is about to exit and there is no interactive UI to keep responsive.
         self.as_mut().set_polling_active(false);
         self.as_mut().set_playing(false);
         self.as_mut().set_has_media(false);
         self.as_mut().rust_mut().pending_media = None;
-        self.as_mut().rust_mut().backend.take();
+        if let Some(mut backend) = self.as_mut().rust_mut().backend.take() {
+            backend.begin_shutdown();
+            drop(backend);
+        }
+        self.as_mut().set_shutdown_complete(true);
     }
 
     fn commit_pending_media(mut self: Pin<&mut Self>) {
@@ -474,10 +549,7 @@ impl qobject::PlayerController {
         }
 
         let audio_count = self.rust().audio_tracks.len().min(i32::MAX as usize) as i32;
-        let subtitle_count = self.rust()
-            .subtitle_tracks
-            .len()
-            .min(i32::MAX as usize) as i32;
+        let subtitle_count = self.rust().subtitle_tracks.len().min(i32::MAX as usize) as i32;
         self.as_mut().set_audio_track_count(audio_count);
         self.as_mut().set_subtitle_track_count(subtitle_count);
         self.as_mut().set_media_size_text(QString::from(&size_text));
@@ -495,8 +567,7 @@ impl qobject::PlayerController {
             )
         };
         self.as_mut().set_audio_track_label(QString::from(&audio));
-        self.as_mut()
-            .set_subtitle_track_label(QString::from(&subtitle));
+        self.as_mut().set_subtitle_track_label(QString::from(&subtitle));
     }
 
     fn reset_media_info(mut self: Pin<&mut Self>) {
@@ -530,7 +601,10 @@ impl qobject::PlayerController {
 }
 
 fn media_start_confirmed(state: PlaybackState) -> bool {
-    matches!(state, PlaybackState::Playing | PlaybackState::Paused | PlaybackState::Ended)
+    matches!(
+        state,
+        PlaybackState::Playing | PlaybackState::Paused | PlaybackState::Ended
+    )
 }
 
 fn next_track_index(selected: Option<usize>, len: usize) -> Option<usize> {
