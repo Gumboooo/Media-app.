@@ -1,9 +1,9 @@
 use crate::{VideoTarget, VlcError, VlcPlayer};
 use aperture_core::{MediaRuntimeInfo, PlaybackSnapshot, PlaybackState};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -153,7 +153,11 @@ impl VlcWorker {
             snapshot: shared.snapshot,
             media_info: Arc::clone(&shared.media_info),
             media_info_revision: shared.media_info_revision,
-            error: if shared.pending_commands == 0 || !shared.alive { shared.pending_error.take() } else { None },
+            error: if shared.pending_commands == 0 || !shared.alive {
+                shared.pending_error.take()
+            } else {
+                None
+            },
             pending_commands: shared.pending_commands > 0 && shared.alive,
         }
     }
@@ -172,7 +176,7 @@ impl VlcWorker {
             Ok(()) => {
                 shared.pending_commands += 1;
                 Ok(())
-            },
+            }
             Err(TrySendError::Full(_)) => Err(VlcError::CommandQueueFull),
             Err(TrySendError::Disconnected(_)) => {
                 let failure = shared.pending_error.clone();
@@ -234,7 +238,9 @@ fn worker_main(
     let mut info_refresh_attempts = 0u8;
 
     loop {
-        if stopping.load(Ordering::Acquire) { break; }
+        if stopping.load(Ordering::Acquire) {
+            break;
+        }
         let next = if poll_active {
             match receiver.recv_timeout(ACTIVE_POLL_INTERVAL) {
                 Ok(command) => Some(command),
@@ -248,9 +254,13 @@ fn worker_main(
             }
         };
 
-        if stopping.load(Ordering::Acquire) { break; }
+        if stopping.load(Ordering::Acquire) {
+            break;
+        }
         // Acknowledge even on early error/continue, but only after publishing the outcome.
-        let _completion = next.as_ref().map(|_| CommandCompletion(Arc::clone(&shared)));
+        let _completion = next
+            .as_ref()
+            .map(|_| CommandCompletion(Arc::clone(&shared)));
         if let Some(command) = next {
             match command {
                 Command::Open(path) => {
@@ -278,7 +288,6 @@ fn worker_main(
                             );
                             waiting_for_start = true;
                             startup_deadline = Some(Instant::now() + STARTUP_TIMEOUT);
-                            poll_active = true;
                         }
                         Err(error) => {
                             player.stop();
@@ -295,7 +304,6 @@ fn worker_main(
                     Ok(()) => {
                         waiting_for_start = true;
                         startup_deadline = Some(Instant::now() + STARTUP_TIMEOUT);
-                        poll_active = true;
                     }
                     Err(error) => {
                         set_fatal_error(&shared, error.to_string());
@@ -309,8 +317,14 @@ fn worker_main(
                     startup_deadline = None;
                 }
                 Command::TogglePlayback => {
-                    if waiting_for_start || matches!(player.snapshot().state,
-                        PlaybackState::Playing | PlaybackState::Opening | PlaybackState::Buffering) {
+                    if waiting_for_start
+                        || matches!(
+                            player.snapshot().state,
+                            PlaybackState::Playing
+                                | PlaybackState::Opening
+                                | PlaybackState::Buffering
+                        )
+                    {
                         player.pause(true);
                         waiting_for_start = false;
                         startup_deadline = None;
@@ -322,7 +336,6 @@ fn worker_main(
                         }
                         waiting_for_start = true;
                         startup_deadline = Some(Instant::now() + STARTUP_TIMEOUT);
-                        poll_active = true;
                     }
                 }
                 Command::Stop => {
@@ -396,12 +409,17 @@ fn worker_main(
             next_info_refresh = Some(Instant::now() + INFO_REFRESH_INTERVAL);
         }
 
-        poll_active = matches!(
-            snapshot.state,
-            PlaybackState::Opening | PlaybackState::Buffering | PlaybackState::Playing
-        );
+        poll_active = should_poll(waiting_for_start, snapshot.state);
         set_snapshot(&shared, snapshot);
     }
+}
+
+fn should_poll(waiting_for_start: bool, state: PlaybackState) -> bool {
+    waiting_for_start
+        || matches!(
+            state,
+            PlaybackState::Opening | PlaybackState::Buffering | PlaybackState::Playing
+        )
 }
 
 fn refresh_media_info(
@@ -456,10 +474,23 @@ mod tests {
             pending_commands: 0,
             alive: true,
         }));
-        (VlcWorker {
-            commands: Some(commands), shared, join: None,
-            stopping: Arc::new(AtomicBool::new(false)),
-        }, receiver)
+        (
+            VlcWorker {
+                commands: Some(commands),
+                shared,
+                join: None,
+                stopping: Arc::new(AtomicBool::new(false)),
+            },
+            receiver,
+        )
+    }
+
+    #[test]
+    fn waiting_for_start_keeps_polling_through_transient_paused_state() {
+        assert!(should_poll(true, PlaybackState::Paused));
+        assert!(should_poll(true, PlaybackState::Stopped));
+        assert!(!should_poll(false, PlaybackState::Paused));
+        assert!(should_poll(false, PlaybackState::Playing));
     }
 
     #[test]
@@ -471,9 +502,13 @@ mod tests {
         let completion = CommandCompletion(Arc::clone(&worker.shared));
         // Dequeueing alone must not stop the UI timer.
         assert!(worker.report().pending_commands);
-        set_snapshot(&worker.shared, PlaybackSnapshot {
-            state: PlaybackState::Opening, ..PlaybackSnapshot::default()
-        });
+        set_snapshot(
+            &worker.shared,
+            PlaybackSnapshot {
+                state: PlaybackState::Opening,
+                ..PlaybackSnapshot::default()
+            },
+        );
         drop(completion);
         let report = worker.report();
         assert!(!report.pending_commands);
@@ -489,14 +524,19 @@ mod tests {
         set_nonfatal_error(&worker.shared, "Track unavailable".into());
         assert!(worker.report().error.is_none());
         drop(completion);
-        assert_eq!(worker.report().error.as_deref(), Some("Track unavailable"));
+        assert_eq!(
+            worker.report().error.as_deref(),
+            Some("Track unavailable")
+        );
         assert!(worker.report().error.is_none());
     }
 
     #[test]
     fn rejected_commands_do_not_leave_phantom_pending_work() {
         let (worker, receiver) = harness();
-        for _ in 0..COMMAND_QUEUE_CAPACITY { worker.pause().unwrap(); }
+        for _ in 0..COMMAND_QUEUE_CAPACITY {
+            worker.pause().unwrap();
+        }
         assert!(matches!(worker.stop(), Err(VlcError::CommandQueueFull)));
         for _ in 0..COMMAND_QUEUE_CAPACITY {
             receiver.recv().unwrap();
@@ -522,7 +562,9 @@ mod tests {
     #[test]
     fn shutdown_signal_bypasses_a_full_queue() {
         let (worker, _receiver) = harness();
-        for _ in 0..COMMAND_QUEUE_CAPACITY { worker.play().unwrap(); }
+        for _ in 0..COMMAND_QUEUE_CAPACITY {
+            worker.play().unwrap();
+        }
         let stopping = Arc::clone(&worker.stopping);
         drop(worker);
         assert!(stopping.load(Ordering::Acquire));
