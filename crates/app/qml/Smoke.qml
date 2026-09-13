@@ -10,6 +10,8 @@ Main {
     property string mediaUrl: mediaArg >= 0 ? Qt.application.arguments[mediaArg + 1] : ""
     property bool skipMixerChecks: Qt.application.arguments.indexOf("--smoke-no-mixer") >= 0
     property bool closeDuringPlayback: Qt.application.arguments.indexOf("--smoke-close-while-playing") >= 0
+    property bool basicPlayback: Qt.application.arguments.indexOf("--smoke-basic-playback") >= 0
+    property bool expectVideo: Qt.application.arguments.indexOf("--smoke-expect-video") >= 0
 
     function backendFailureCode(message) {
         if (message.indexOf("libVLC could not be found") >= 0) return 41
@@ -40,6 +42,7 @@ Main {
         // code so Windows GUI-subsystem builds remain diagnosable without stdout/stderr.
         Qt.exit(ok ? 0 : (exitCode === undefined ? 20 + smokeWindow.stage : exitCode))
     }
+
     Timer {
         id: probe
         interval: 200
@@ -67,12 +70,26 @@ Main {
                 break
             case 1:
                 if (p.playing && p.positionMs >= 300) {
+                    // A video smoke must prove that libVLC discovered an actual video stream, not
+                    // merely that the playback clock advanced on an arbitrary container.
+                    if (smokeWindow.expectVideo && p.videoDimensionsText === "—")
+                        return
+
                     if (smokeWindow.closeDuringPlayback) {
                         // Do not call the blocking test-only shutdown helper here. Closing the real
                         // window must exercise Main.qml's beginShutdown()/pollShutdown() path and
                         // naturally terminate the process when the last window is finally accepted.
                         probe.stop()
                         smokeWindow.close()
+                        return
+                    }
+                    if (smokeWindow.basicPlayback) {
+                        smokeWindow.finish(
+                            true,
+                            smokeWindow.expectVideo
+                                ? "video opened, advanced, and reported dimensions " + p.videoDimensionsText
+                                : "media opened and playback advanced"
+                        )
                         return
                     }
                     if (smokeWindow.skipMixerChecks) {
