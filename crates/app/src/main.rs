@@ -44,11 +44,18 @@ fn main() -> std::process::ExitCode {
         return std::process::ExitCode::FAILURE;
     }
 
-    // Preserve Qt's event-loop success/failure contract. Smoke.qml deliberately uses
-    // Qt.exit(nonzero) on a failed probe, and CI must observe that as a failed process.
-    if app_ref.exec() == 0 {
+    // Preserve Qt's event-loop exit code instead of flattening every failure to 1. Smoke.qml
+    // uses codes 20..28 to identify the exact failed probe stage, which must survive the Rust
+    // process boundary so packaged release builds remain diagnosable without console logging.
+    let qt_exit_code = app_ref.exec();
+    if qt_exit_code == 0 {
         std::process::ExitCode::SUCCESS
     } else {
-        std::process::ExitCode::FAILURE
+        let portable_code = if (1..=255).contains(&qt_exit_code) {
+            qt_exit_code as u8
+        } else {
+            1
+        };
+        std::process::ExitCode::from(portable_code)
     }
 }
