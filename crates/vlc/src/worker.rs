@@ -386,6 +386,7 @@ fn worker_main(
 
         let mut snapshot = player.snapshot();
         if waiting_for_start {
+            snapshot.state = visible_startup_state(snapshot.state);
             match snapshot.state {
                 PlaybackState::Playing => {
                     waiting_for_start = false;
@@ -396,11 +397,6 @@ fn worker_main(
                 PlaybackState::Error | PlaybackState::Ended => {
                     waiting_for_start = false;
                     startup_deadline = None;
-                }
-                PlaybackState::Stopped => {
-                    // Immediately after play(), libVLC can briefly report NothingSpecial/Stopped.
-                    // Keep the externally visible state as Opening during that transition.
-                    snapshot.state = PlaybackState::Opening;
                 }
                 _ => {}
             }
@@ -432,6 +428,16 @@ fn worker_main(
 
         poll_active = should_poll(waiting_for_start, snapshot.state);
         set_snapshot(&shared, snapshot);
+    }
+}
+
+fn visible_startup_state(state: PlaybackState) -> PlaybackState {
+    match state {
+        // Immediately after play()/resume, libVLC can briefly report NothingSpecial/Stopped or
+        // the previous Paused state. Publishing either would make the Qt refresh timer stop before
+        // the worker observes the eventual Playing transition.
+        PlaybackState::Paused | PlaybackState::Stopped => PlaybackState::Opening,
+        other => other,
     }
 }
 
@@ -507,11 +513,15 @@ mod tests {
     }
 
     #[test]
-    fn waiting_for_start_keeps_polling_through_transient_paused_state() {
+    fn waiting_for_start_keeps_polling_and_hides_transient_idle_states() {
         assert!(should_poll(true, PlaybackState::Paused));
         assert!(should_poll(true, PlaybackState::Stopped));
         assert!(!should_poll(false, PlaybackState::Paused));
         assert!(should_poll(false, PlaybackState::Playing));
+        assert_eq!(visible_startup_state(PlaybackState::Paused), PlaybackState::Opening);
+        assert_eq!(visible_startup_state(PlaybackState::Stopped), PlaybackState::Opening);
+        assert_eq!(visible_startup_state(PlaybackState::Buffering), PlaybackState::Buffering);
+        assert_eq!(visible_startup_state(PlaybackState::Playing), PlaybackState::Playing);
     }
 
     #[test]
