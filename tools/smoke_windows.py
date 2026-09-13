@@ -1,4 +1,5 @@
 """Development-only startup and transport tests of the deployed executable."""
+import ctypes
 import json
 import os
 from pathlib import Path
@@ -44,6 +45,79 @@ BACKEND_FAILURES = {
     57: "unclassified-backend-error",
 }
 
+
+def libvlc_media_probe():
+    """Independently exercise the packaged libVLC path/location constructors.
+
+    This deliberately bypasses Aperture's Rust FFI. If both layers fail identically, the problem
+    is in libVLC/path semantics or packaging; if ctypes succeeds, our Rust boundary is suspect.
+    """
+    report = {"fixture": str(fixture), "fixture_uri": fixture.as_uri(), "cases": []}
+    dll_dir = None
+    instance = None
+    try:
+        if hasattr(os, "add_dll_directory"):
+            dll_dir = os.add_dll_directory(str(bundle))
+        vlc = ctypes.CDLL(str(bundle / "libvlc.dll"))
+
+        vlc.libvlc_new.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_char_p)]
+        vlc.libvlc_new.restype = ctypes.c_void_p
+        vlc.libvlc_release.argtypes = [ctypes.c_void_p]
+        vlc.libvlc_release.restype = None
+        vlc.libvlc_media_new_path.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+        vlc.libvlc_media_new_path.restype = ctypes.c_void_p
+        vlc.libvlc_media_new_location.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+        vlc.libvlc_media_new_location.restype = ctypes.c_void_p
+        vlc.libvlc_media_release.argtypes = [ctypes.c_void_p]
+        vlc.libvlc_media_release.restype = None
+        vlc.libvlc_errmsg.argtypes = []
+        vlc.libvlc_errmsg.restype = ctypes.c_char_p
+        clearerr = getattr(vlc, "libvlc_clearerr", None)
+        if clearerr is not None:
+            clearerr.argtypes = []
+            clearerr.restype = None
+
+        options = (ctypes.c_char_p * 3)(
+            b"--no-video-title-show",
+            b"--no-metadata-network-access",
+            b"--aout=dummy",
+        )
+        instance = vlc.libvlc_new(len(options), options)
+        if not instance:
+            raw = vlc.libvlc_errmsg()
+            report["instance_error"] = raw.decode("utf-8", "replace") if raw else "unknown"
+            return report
+
+        native = str(fixture)
+        cases = [
+            ("path-native", vlc.libvlc_media_new_path, native),
+            ("path-forward-slash", vlc.libvlc_media_new_path, native.replace("\\", "/")),
+            ("location-file-uri", vlc.libvlc_media_new_location, fixture.as_uri()),
+        ]
+        for name, constructor, value in cases:
+            if clearerr is not None:
+                clearerr()
+            media = constructor(instance, value.encode("utf-8"))
+            raw = vlc.libvlc_errmsg()
+            case = {"case": name, "value": value, "created": bool(media)}
+            if raw:
+                case["libvlc_error"] = raw.decode("utf-8", "replace")
+            report["cases"].append(case)
+            if media:
+                vlc.libvlc_media_release(media)
+    except Exception as exc:  # Diagnostic only; never hide the original smoke failure.
+        report["probe_exception"] = repr(exc)
+    finally:
+        if instance:
+            try:
+                vlc.libvlc_release(instance)
+            except Exception:
+                pass
+        if dll_dir is not None:
+            dll_dir.close()
+    return report
+
+
 results = []
 tests = [
     ("startup", []),
@@ -66,6 +140,13 @@ for name, args in tests:
             result["failed_stage"] = run.returncode - 20
         if not passed and run.returncode in BACKEND_FAILURES:
             result["backend_failure"] = BACKEND_FAILURES[run.returncode]
+        if not passed and run.returncode == 49:
+            probe = libvlc_media_probe()
+            result["libvlc_media_probe"] = probe
+            (evidence / "libvlc-media-probe.json").write_text(
+                json.dumps(probe, indent=2), encoding="utf-8"
+            )
+            print("libVLC media probe:", json.dumps(probe, indent=2), flush=True)
         results.append(result)
     except subprocess.TimeoutExpired:
         log = "Timed out after 30 seconds; test process was terminated."
