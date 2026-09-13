@@ -58,14 +58,25 @@ $innoVersion = (Get-Item $iscc).VersionInfo.FileVersion
 
 # Prove the one-file installer reconstructs the tested bundle correctly. Install per-user into a
 # throwaway directory, run the same packaged playback/shutdown suite from that installed copy, and
-# then exercise the generated uninstaller.
+# then exercise the generated uninstaller. Inno Setup is a GUI-subsystem executable, so invoke it
+# through Start-Process -Wait instead of relying on PowerShell's native-command waiting semantics.
 $installDir = Join-Path $projectRoot 'build/installer-smoke-install'
 if (Test-Path $installDir) {
     Remove-Item $installDir -Recurse -Force
 }
 $installerLog = Join-Path $evidence 'installer-install.log'
-& $setup.FullName '/VERYSILENT' '/SUPPRESSMSGBOXES' '/NORESTART' '/SP-' "/DIR=$installDir" "/LOG=$installerLog"
-if ($LASTEXITCODE) { throw "Installer smoke installation failed with exit code $LASTEXITCODE." }
+$installArguments = @(
+    '/VERYSILENT',
+    '/SUPPRESSMSGBOXES',
+    '/NORESTART',
+    '/SP-',
+    "/DIR=$installDir",
+    "/LOG=$installerLog"
+)
+$installProcess = Start-Process -FilePath $setup.FullName -ArgumentList $installArguments -Wait -PassThru
+if ($installProcess.ExitCode -ne 0) {
+    throw "Installer smoke installation failed with exit code $($installProcess.ExitCode)."
+}
 
 $installedExe = Join-Path $installDir 'aperture.exe'
 if (!(Test-Path $installedExe)) {
@@ -80,8 +91,14 @@ $uninstaller = Join-Path $installDir 'unins000.exe'
 if (!(Test-Path $uninstaller)) {
     throw 'The installer did not create an uninstaller.'
 }
-& $uninstaller '/VERYSILENT' '/SUPPRESSMSGBOXES' '/NORESTART'
-if ($LASTEXITCODE) { throw "Installer smoke uninstall failed with exit code $LASTEXITCODE." }
+$uninstallProcess = Start-Process -FilePath $uninstaller -ArgumentList @(
+    '/VERYSILENT',
+    '/SUPPRESSMSGBOXES',
+    '/NORESTART'
+) -Wait -PassThru
+if ($uninstallProcess.ExitCode -ne 0) {
+    throw "Installer smoke uninstall failed with exit code $($uninstallProcess.ExitCode)."
+}
 Start-Sleep -Milliseconds 750
 if (Test-Path $installedExe) {
     throw 'The Aperture uninstaller left the installed executable behind.'
