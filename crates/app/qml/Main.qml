@@ -27,8 +27,6 @@ ApplicationWindow {
         if (appWindow.closeAfterShutdown)
             return
 
-        // Keep the QWindow/WindowContainer alive while libVLC unwinds on its worker thread.
-        // This avoids both a UI-thread join and destruction of a native target still in use.
         close.accepted = false
         player.beginShutdown()
         if (player.shutdownComplete) {
@@ -45,8 +43,6 @@ ApplicationWindow {
 
     VideoSurface {
         id: videoSurface
-        // Forward both creation and destruction. A zero handle tells the backend to detach from
-        // the old native surface before Qt destroys/recreates it.
         onNativeHandleChanged: player.attachVideoSurface(nativeHandle)
     }
 
@@ -67,9 +63,20 @@ ApplicationWindow {
         window: appWindow
         openDialog: appWindow.filePicker
     }
-    Shortcut { sequence: "Escape"; enabled: appWindow.fullScreen; onActivated: playerActions.fullscreen.trigger() }
-    Shortcut { sequence: "Up"; onActivated: player.requestVolume(Math.min(125, player.volume + 5)) }
-    Shortcut { sequence: "Down"; onActivated: player.requestVolume(Math.max(0, player.volume - 5)) }
+
+    Shortcut {
+        sequence: "Escape"
+        enabled: appWindow.fullScreen
+        onActivated: playerActions.fullscreen.trigger()
+    }
+    Shortcut {
+        sequence: "Up"
+        onActivated: player.requestVolume(Math.min(125, player.volume + 5))
+    }
+    Shortcut {
+        sequence: "Down"
+        onActivated: player.requestVolume(Math.max(0, player.volume - 5))
+    }
 
     function toggleFullscreen() {
         if (fullScreen) {
@@ -108,31 +115,69 @@ ApplicationWindow {
         Rectangle {
             id: topBar
             width: parent.width
-            height: Theme.toolbarHeight
-            color: Theme.window
+            height: visible ? Theme.toolbarHeight : 0
+            visible: !appWindow.fullScreen
+            color: Theme.toolbar
 
             RowLayout {
                 anchors.fill: parent
                 anchors.leftMargin: Theme.space4
-                anchors.rightMargin: Theme.space4
+                anchors.rightMargin: Theme.space3
                 spacing: Theme.space3
 
                 Label {
-                    Layout.fillWidth: true
-                    text: player.mediaTitle.length > 0 ? player.mediaTitle : "Aperture"
+                    text: "Aperture"
                     color: Theme.text
                     font.pixelSize: Theme.textTitle
-                    font.weight: Font.Medium
-                    elide: Text.ElideMiddle
+                    font.weight: Font.DemiBold
                 }
 
-                AppButton {
+                Rectangle {
+                    Layout.preferredWidth: Theme.borderWidth
+                    Layout.preferredHeight: 18
+                    color: Theme.borderStrong
+                }
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 0
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: player.mediaTitle.length > 0 ? player.mediaTitle : "Local media player"
+                        color: player.mediaTitle.length > 0 ? Theme.text : Theme.textMuted
+                        font.pixelSize: Theme.textBody
+                        font.weight: player.mediaTitle.length > 0 ? Font.Medium : Font.Normal
+                        elide: Text.ElideMiddle
+                    }
+
+                    Label {
+                        Layout.fillWidth: true
+                        visible: player.mediaPath.length > 0 && topBar.height >= 44
+                        text: player.mediaPath
+                        color: Theme.textDim
+                        font.pixelSize: Theme.textTiny
+                        elide: Text.ElideMiddle
+                    }
+                }
+
+                IconButton {
                     action: playerActions.inspect
+                    iconName: "info"
                 }
 
-                AppButton {
+                IconButton {
                     action: playerActions.fullscreen
+                    iconName: "fullscreen"
                 }
+            }
+
+            Rectangle {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: Theme.dividerHeight
+                color: Theme.border
             }
         }
 
@@ -166,34 +211,67 @@ ApplicationWindow {
                         }
                     }
 
-                    Column {
+                    Rectangle {
+                        id: emptyDropZone
                         anchors.centerIn: parent
-                        spacing: Theme.space4
+                        width: Math.max(280, Math.min(430, playerPane.width - Theme.space6 * 2))
+                        height: Math.max(190, Math.min(240, playerPane.height - Theme.space6 * 2))
                         visible: !player.hasMedia
+                        radius: Theme.radiusLarge
+                        color: dropArea.containsDrag ? Theme.surface : "transparent"
+                        border.width: Theme.borderWidth
+                        border.color: dropArea.containsDrag ? Theme.borderStrong : Theme.border
 
-                        Label {
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            text: "Open a media file"
-                            color: Theme.text
-                            font.pixelSize: Theme.textEmptyState
-                            font.weight: Font.Medium
-                        }
+                        Column {
+                            anchors.centerIn: parent
+                            width: parent.width - Theme.space6 * 2
+                            spacing: Theme.space3
 
-                        Label {
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            text: "Drop a file here, or press Ctrl+O"
-                            color: Theme.textMuted
-                            font.pixelSize: Theme.textBody
-                        }
+                            IconGlyph {
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                width: Theme.emptyIconSize
+                                height: width
+                                name: "open"
+                                glyphColor: dropArea.containsDrag ? Theme.text : Theme.textDim
+                                strokeWidth: 1.5
+                            }
 
-                        AppButton {
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            action: playerActions.open
-                            text: "Choose file"
+                            Label {
+                                width: parent.width
+                                text: dropArea.containsDrag ? "Release to open" : "Drop media here"
+                                color: Theme.text
+                                font.pixelSize: Theme.textEmptyState
+                                font.weight: Font.Medium
+                                horizontalAlignment: Text.AlignHCenter
+                            }
+
+                            Label {
+                                width: parent.width
+                                text: "Video and audio files stay on this computer"
+                                color: Theme.textMuted
+                                font.pixelSize: Theme.textEmptySubhead
+                                horizontalAlignment: Text.AlignHCenter
+                                wrapMode: Text.WordWrap
+                            }
+
+                            AppButton {
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                action: playerActions.open
+                                text: "Open file"
+                            }
+
+                            Label {
+                                width: parent.width
+                                text: "Ctrl+O"
+                                color: Theme.textDim
+                                font.pixelSize: Theme.textTiny
+                                horizontalAlignment: Text.AlignHCenter
+                            }
                         }
                     }
 
                     DropArea {
+                        id: dropArea
                         anchors.fill: parent
                         onDropped: function(drop) {
                             if (drop.urls.length > 0) {
@@ -206,9 +284,10 @@ ApplicationWindow {
 
                 MediaInfoPanel {
                     id: infoPanel
-                    width: visible ? Math.min(Theme.inspectorWidth, Math.max(0, mediaArea.width - Theme.minimumPlayerWidth)) : 0
+                    width: visible ? Math.min(Theme.inspectorWidth,
+                                              Math.max(0, mediaArea.width - Theme.minimumPlayerWidth)) : 0
                     height: parent.height
-                    visible: appWindow.showMediaInfo && player.hasMedia
+                    visible: appWindow.showMediaInfo && player.hasMedia && !appWindow.fullScreen
                     player: appWindow.playbackController
                 }
             }
@@ -241,7 +320,6 @@ ApplicationWindow {
                 }
 
                 AppButton {
-                    id: dismissButton
                     text: "Dismiss"
                     onClicked: player.clearError()
                 }
