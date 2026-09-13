@@ -7,6 +7,7 @@ use std::pin::Pin;
 
 #[cxx_qt::bridge(namespace = "aperture")]
 pub mod qobject {
+    #[namespace = ""]
     unsafe extern "C++" {
         include!("cxx-qt-lib/qstring.h");
         type QString = cxx_qt_lib::QString;

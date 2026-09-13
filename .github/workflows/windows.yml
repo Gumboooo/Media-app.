@@ -30,7 +30,7 @@ jobs:
           git checkout --detach FETCH_HEAD
           if ($LASTEXITCODE) { throw 'git checkout failed' }
           if ((git rev-parse HEAD) -ne $env:GITHUB_SHA) { throw 'Commit mismatch' }
-      - name: Install Qt and run native build checks
+      - name: Install Qt 6.8.3
         shell: pwsh
         working-directory: ${{ runner.temp }}/aperture-source
         run: |
@@ -40,8 +40,14 @@ jobs:
           $qtDir = Join-Path $env:RUNNER_TEMP 'aperture-qt'
           python -m aqt install-qt windows desktop 6.8.3 win64_msvc2022_64 -O $qtDir
           if ($LASTEXITCODE) { throw 'Qt installation failed' }
-          $env:QT_ROOT_DIR = Join-Path $qtDir '6.8.3/msvc2022_64'
-          $env:PATH = "$env:QT_ROOT_DIR/bin;$env:PATH"
+          $qtRoot = Join-Path $qtDir '6.8.3/msvc2022_64'
+          "QT_ROOT_DIR=$qtRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "QMAKE=$qtRoot/bin/qmake.exe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "$qtRoot/bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Test, build, package, and smoke-test player
+        shell: pwsh
+        working-directory: ${{ runner.temp }}/aperture-source
+        run: |
           ./tools/windows-build.ps1
       - name: Keep build evidence
         if: always()
