@@ -151,10 +151,10 @@ impl Default for PlayerControllerRust {
 
 impl qobject::PlayerController {
     pub fn attach_video_surface(mut self: Pin<&mut Self>, native_handle: u64) {
-        if native_handle == 0 {
-            return;
-        }
-        self.as_mut().rust_mut().native_video_handle = Some(native_handle);
+        // A zero handle is a real lifecycle event: Qt is destroying the platform surface. Pass
+        // zero through to libVLC so it drops the stale native target before the HWND/view dies.
+        self.as_mut().rust_mut().native_video_handle =
+            (native_handle != 0).then_some(native_handle);
         let result = self.rust()
             .backend
             .as_ref()
@@ -203,8 +203,8 @@ impl qobject::PlayerController {
         match result {
             Ok(()) => {
                 // Queue acceptance is not media-open success. Keep the requested source private
-                // until refresh() observes a settled, non-error worker result. This also means
-                // rapid A -> B requests can only commit B after both queued commands settle.
+                // until refresh() observes a confirmed playable state. This also means rapid
+                // A -> B requests can only commit B after all queued opens settle.
                 self.as_mut().rust_mut().pending_media =
                     Some(MediaSource::local_file(path));
                 self.as_mut().reset_media_info();
@@ -359,7 +359,9 @@ impl qobject::PlayerController {
         if failed {
             // Never publish a requested file as loaded when its settled worker result failed.
             self.as_mut().rust_mut().pending_media = None;
-        } else if self.rust().pending_media.is_some() {
+        } else if self.rust().pending_media.is_some() && media_start_confirmed(snapshot.state) {
+            // libVLC accepting play() is not enough: malformed/unsupported media may fail later.
+            // Commit visible identity only once playback actually reaches a playable state.
             self.as_mut().commit_pending_media();
         }
 
@@ -527,6 +529,10 @@ impl qobject::PlayerController {
     }
 }
 
+fn media_start_confirmed(state: PlaybackState) -> bool {
+    matches!(state, PlaybackState::Playing | PlaybackState::Paused | PlaybackState::Ended)
+}
+
 fn next_track_index(selected: Option<usize>, len: usize) -> Option<usize> {
     if len == 0 {
         return None;
@@ -585,6 +591,18 @@ fn video_target(native_handle: u64) -> VideoTarget {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn media_identity_waits_for_a_confirmed_playable_state() {
+        assert!(!media_start_confirmed(PlaybackState::Empty));
+        assert!(!media_start_confirmed(PlaybackState::Opening));
+        assert!(!media_start_confirmed(PlaybackState::Buffering));
+        assert!(!media_start_confirmed(PlaybackState::Stopped));
+        assert!(!media_start_confirmed(PlaybackState::Error));
+        assert!(media_start_confirmed(PlaybackState::Playing));
+        assert!(media_start_confirmed(PlaybackState::Paused));
+        assert!(media_start_confirmed(PlaybackState::Ended));
+    }
 
     #[test]
     fn cycling_wraps_and_handles_empty_track_lists() {
