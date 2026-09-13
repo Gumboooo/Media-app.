@@ -1,6 +1,35 @@
 {
-  "checks": [],
-  "status": "blocked",
-  "playback_tested": false,
-  "reason": "Rust/Cargo is not installed or not on PATH."
+  "status": "verified-development-milestone",
+  "release_ready": false,
+  "platform": "windows-2022",
+  "toolchain": {
+    "rust": "1.98.1",
+    "qt": "6.8.3-msvc2022_64",
+    "libvlc": "3.x-pinned-bundle"
+  },
+  "verified_code_head": "eaaed911709622cf6c4ddf1b89fcbcebd3ea716f",
+  "evidence_workflow": "Native Windows player",
+  "evidence_run_id": 34754862616,
+  "playback_tested": true,
+  "checks": [
+    {"name": "aperture-core-tests", "passed": true, "count": 4},
+    {"name": "aperture-vlc-tests", "passed": true, "count": 10},
+    {"name": "aperture-app-tests", "passed": true, "count": 3},
+    {"name": "release-build", "passed": true},
+    {"name": "windows-runtime-packaging", "passed": true},
+    {"name": "packaged-startup", "passed": true},
+    {"name": "audio-transport", "passed": true},
+    {"name": "close-during-audio-playback", "passed": true},
+    {"name": "video-playback-with-dimensions", "passed": true},
+    {"name": "close-during-video-playback", "passed": true}
+  ],
+  "not_yet_verified": [
+    "broad real-world codec/container matrix",
+    "subtitle rendering correctness",
+    "pixel-level rendered-frame correctness",
+    "hardware decoding and GPU-vendor coverage",
+    "physical audio device and mixer behavior",
+    "production installer/signing/upgrades",
+    "strict offline/network isolation"
+  ]
 }
