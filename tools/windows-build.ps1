@@ -72,7 +72,7 @@ try {
         throw "VideoLAN package digest mismatch. Expected $expectedVlcSha256 but received $vlcHash."
     }
     Expand-Archive $package -DestinationPath $packageRoot -Force
-    $vlcDlls = @(Get-ChildItem $packageRoot -Recurse -Filter libvlc.dll | Where-Object { $_.FullName.Replace('\\', '/') -match '/(x64|win-x64)/' })
+    $vlcDlls = @(Get-ChildItem $packageRoot -Recurse -Filter libvlc.dll | Where-Object { $_.FullName.Replace('\', '/') -match '/(x64|win-x64)/' })
     if ($vlcDlls.Count -ne 1) { throw 'Cannot uniquely identify the x64 libVLC runtime.' }
     Copy-Item (Join-Path $vlcDlls[0].DirectoryName '*') $bundle -Recurse -Force
     if (!(Test-Path (Join-Path $bundle 'libvlccore.dll')) -or !(Test-Path (Join-Path $bundle 'plugins'))) { throw 'Incomplete VLC runtime bundle.' }
@@ -120,7 +120,7 @@ try {
         Copy-Item (Join-Path $env:QT_ROOT_DIR 'licenses') (Join-Path $licenses 'Qt') -Recurse -Force
     }
     Get-ChildItem $packageRoot -Recurse -File | Where-Object { $_.Name -match '^(COPYING|LICENSE|NOTICE)' } | ForEach-Object {
-        $relative = $_.FullName.Substring($packageRoot.Length).TrimStart('\\', '/')
+        $relative = $_.FullName.Substring($packageRoot.Length).TrimStart('\', '/')
         $target = Join-Path (Join-Path $licenses 'VideoLAN') $relative
         New-Item -ItemType Directory -Force (Split-Path $target -Parent) | Out-Null
         Copy-Item $_.FullName $target -Force
