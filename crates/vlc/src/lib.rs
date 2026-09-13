@@ -81,7 +81,19 @@ impl VlcPlayer {
         // optional artwork/metadata lookups behind the user's back.
         let no_title = c"--no-video-title-show";
         let no_metadata_network = c"--no-metadata-network-access";
-        let args = [no_title.as_ptr(), no_metadata_network.as_ptr()];
+        let dummy_audio = c"--aout=dummy";
+        let mut args = vec![no_title.as_ptr(), no_metadata_network.as_ptr()];
+
+        // GitHub-hosted Windows runners have no default audio endpoint. VideoLAN uses the dummy
+        // audio output for its own headless player tests, so our packaged smoke test can request
+        // the same sink without changing normal application playback or media quality.
+        if matches!(
+            std::env::var("APERTURE_TEST_DUMMY_AUDIO"),
+            Ok(value) if value == "1"
+        ) {
+            args.push(dummy_audio.as_ptr());
+        }
+
         let instance = unsafe { (api.new)(args.len() as i32, args.as_ptr()) };
         if instance.is_null() {
             return Err(VlcError::InstanceCreation(api.last_error()));
@@ -366,14 +378,43 @@ mod path_tests {
     }
 }
 
+#[cfg(all(test, target_os = "windows"))]
+mod windows_path_tests {
+    use super::*;
+
+    #[test]
+    fn libvlc3_receives_native_drive_separators() {
+        let path = Path::new("C:/Temp/generated audio.wav");
+        assert_eq!(
+            media_path(path).unwrap().as_bytes(),
+            br"C:\Temp\generated audio.wav"
+        );
+    }
+
+    #[test]
+    fn libvlc3_receives_native_unc_separators() {
+        let path = Path::new("//server/share/video.mp4");
+        assert_eq!(media_path(path).unwrap().as_bytes(), br"\\server\share\video.mp4");
+    }
+}
+
 // Unix filenames are byte strings. Lossy UTF-8 conversion can silently open the wrong file.
+// On Windows, Qt commonly supplies local file paths with forward slashes. libVLC 3's
+// vlc_path2uri() recognizes a drive prefix but requires the following separator to be the native
+// Windows separator, so normalize only at this FFI boundary. Windows does not permit '/' inside a
+// filename, making this conversion unambiguous.
 fn media_path(path: &Path) -> Result<CString, VlcError> {
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt;
         CString::new(path.as_os_str().as_bytes()).map_err(|_| VlcError::InvalidPath)
     }
-    #[cfg(not(unix))]
+    #[cfg(target_os = "windows")]
+    {
+        let text = path.to_str().ok_or(VlcError::InvalidPath)?;
+        CString::new(text.replace('/', "\\")).map_err(|_| VlcError::InvalidPath)
+    }
+    #[cfg(all(not(unix), not(target_os = "windows")))]
     {
         let text = path.to_str().ok_or(VlcError::InvalidPath)?;
         CString::new(text).map_err(|_| VlcError::InvalidPath)

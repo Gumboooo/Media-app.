@@ -1,15 +1,23 @@
 mod player_controller;
 
-use cxx_qt_lib::{QCoreApplication, QGuiApplication, QQmlApplicationEngine, QUrl};
+use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QUrl};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 fn main() -> std::process::ExitCode {
     let mut app = QGuiApplication::new();
+    let Some(mut app_ref) = app.as_mut() else {
+        eprintln!("Aperture could not create the Qt GUI application.");
+        return std::process::ExitCode::FAILURE;
+    };
 
-    QCoreApplication::set_organization_name(&"Aperture Project".into());
-    QCoreApplication::set_application_name(&"Aperture".into());
-    QCoreApplication::set_application_version(&env!("CARGO_PKG_VERSION").into());
+    app_ref
+        .as_mut()
+        .set_organization_name(&"Aperture Project".into());
+    app_ref.as_mut().set_application_name(&"Aperture".into());
+    app_ref
+        .as_mut()
+        .set_application_version(&env!("CARGO_PKG_VERSION").into());
 
     let smoke = std::env::args().any(|arg| arg == "--smoke-test");
     let root_url = QUrl::from(if smoke {
@@ -36,8 +44,18 @@ fn main() -> std::process::ExitCode {
         return std::process::ExitCode::FAILURE;
     }
 
-    if let Some(app) = app.as_mut() {
-        app.exec();
+    // Preserve Qt's event-loop exit code instead of flattening every failure to 1. Smoke.qml
+    // uses codes 20..28 to identify the exact failed probe stage, which must survive the Rust
+    // process boundary so packaged release builds remain diagnosable without console logging.
+    let qt_exit_code = app_ref.exec();
+    if qt_exit_code == 0 {
+        std::process::ExitCode::SUCCESS
+    } else {
+        let portable_code = if (1..=255).contains(&qt_exit_code) {
+            qt_exit_code as u8
+        } else {
+            1
+        };
+        std::process::ExitCode::from(portable_code)
     }
-    std::process::ExitCode::SUCCESS
 }

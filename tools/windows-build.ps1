@@ -15,7 +15,9 @@ try {
     if ($LASTEXITCODE) { throw 'Rust toolchain setup failed.' }
     cargo test -p aperture-core -p aperture-vlc
     if ($LASTEXITCODE) { throw 'Rust core/backend tests failed.' }
-    cargo test -p aperture-app
+    # The Qt/CXX bridge dominates compile time. Test it in the same release profile used by the
+    # package so Cargo can reuse those native objects instead of compiling the bridge twice.
+    cargo test --release -p aperture-app
     if ($LASTEXITCODE) { throw 'Qt controller tests failed.' }
     cargo build --release -p aperture-app
     if ($LASTEXITCODE) { throw 'Release build failed.' }
@@ -24,11 +26,17 @@ try {
     if ($LASTEXITCODE) { throw 'Qt dependency deployment failed.' }
 
     # Official VideoLAN native package; NuGet is only a distribution format, not a .NET runtime.
+    # Pin both version and bytes so a changed upstream package cannot silently enter the bundle.
     $vlcVersion = '3.0.23.1'
+    $expectedVlcSha256 = '70927AFA9AD34B77E7D9A5E6D02CAE099771F6EB3114DA18111A4B76F65B836F'
     $package = Join-Path $projectRoot 'build/libvlc.zip'
     $packageRoot = Join-Path $projectRoot 'build/libvlc-package'
     Invoke-WebRequest "https://api.nuget.org/v3-flatcontainer/videolan.libvlc.windows/$vlcVersion/videolan.libvlc.windows.$vlcVersion.nupkg" -OutFile $package -TimeoutSec 180 -MaximumRetryCount 2
-    Get-FileHash $package -Algorithm SHA256 | Format-List | Out-File (Join-Path $evidence 'libvlc-package-sha256.txt')
+    $vlcHash = (Get-FileHash $package -Algorithm SHA256).Hash.ToUpperInvariant()
+    "SHA256=$vlcHash" | Out-File (Join-Path $evidence 'libvlc-package-sha256.txt')
+    if ($vlcHash -ne $expectedVlcSha256) {
+        throw "VideoLAN package digest mismatch. Expected $expectedVlcSha256 but received $vlcHash."
+    }
     Expand-Archive $package -DestinationPath $packageRoot -Force
     $vlcDlls = @(Get-ChildItem $packageRoot -Recurse -Filter libvlc.dll | Where-Object { $_.FullName.Replace('\', '/') -match '/(x64|win-x64)/' })
     if ($vlcDlls.Count -ne 1) { throw 'Cannot uniquely identify the x64 libVLC runtime.' }
