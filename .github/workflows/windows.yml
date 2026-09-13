@@ -12,7 +12,7 @@ concurrency:
 jobs:
   windows:
     runs-on: windows-2022
-    timeout-minutes: 35
+    timeout-minutes: 40
     steps:
       # The repository's trailing dot is invalid in a normal Windows checkout path.
       - name: Checkout exact commit into a Windows-safe directory
@@ -49,6 +49,11 @@ jobs:
         working-directory: ${{ runner.temp }}/aperture-source
         run: |
           ./tools/windows-build.ps1
+      - name: Build and smoke-test single-file installer
+        shell: pwsh
+        working-directory: ${{ runner.temp }}/aperture-source
+        run: |
+          ./tools/windows-installer.ps1
       - name: Keep build evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -64,5 +69,12 @@ jobs:
         with:
           name: aperture-windows-x64-dev
           path: ${{ runner.temp }}/aperture-source/build/aperture-windows-x64/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload tested installer EXE
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: aperture-windows-x64-installer
+          path: ${{ runner.temp }}/aperture-source/build/installer/Aperture-Setup-x64.exe
           if-no-files-found: error
           retention-days: 14
