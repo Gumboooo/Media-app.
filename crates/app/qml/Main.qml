@@ -21,8 +21,23 @@ ApplicationWindow {
     property bool fullScreen: visibility === Window.FullScreen
     property int visibilityBeforeFullscreen: Window.Windowed
     property bool showMediaInfo: false
+    property bool closeAfterShutdown: false
 
-    onClosing: player.shutdown()
+    onClosing: function(close) {
+        if (appWindow.closeAfterShutdown)
+            return
+
+        // Keep the QWindow/WindowContainer alive while libVLC unwinds on its worker thread.
+        // This avoids both a UI-thread join and destruction of a native target still in use.
+        close.accepted = false
+        player.beginShutdown()
+        if (player.shutdownComplete) {
+            appWindow.closeAfterShutdown = true
+            Qt.callLater(appWindow.close)
+        } else {
+            shutdownTimer.start()
+        }
+    }
 
     PlayerController {
         id: player
@@ -30,10 +45,9 @@ ApplicationWindow {
 
     VideoSurface {
         id: videoSurface
-        onNativeHandleChanged: {
-            if (nativeHandle !== 0)
-                player.attachVideoSurface(nativeHandle)
-        }
+        // Forward both creation and destruction. A zero handle tells the backend to detach from
+        // the old native surface before Qt destroys/recreates it.
+        onNativeHandleChanged: player.attachVideoSurface(nativeHandle)
     }
 
     FileDialog {
@@ -71,6 +85,20 @@ ApplicationWindow {
         repeat: true
         running: player.pollingActive && appWindow.visible
         onTriggered: player.refresh()
+    }
+
+    Timer {
+        id: shutdownTimer
+        interval: 50
+        repeat: true
+        onTriggered: {
+            player.pollShutdown()
+            if (player.shutdownComplete) {
+                stop()
+                appWindow.closeAfterShutdown = true
+                Qt.callLater(appWindow.close)
+            }
+        }
     }
 
     Column {
