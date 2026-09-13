@@ -8,13 +8,16 @@ Main {
     property int stage: 0
     property int mediaArg: Qt.application.arguments.indexOf("--smoke-media")
     property string mediaUrl: mediaArg >= 0 ? Qt.application.arguments[mediaArg + 1] : ""
+    property bool skipMixerChecks: Qt.application.arguments.indexOf("--smoke-no-mixer") >= 0
 
     function finish(ok, message) {
         probe.stop()
         playbackController.shutdown()
         if (ok) console.info("Aperture smoke passed: " + message)
-        else console.error("Aperture smoke failed: " + message)
-        Qt.exit(ok ? 0 : 1)
+        else console.error("Aperture smoke failed at stage " + smokeWindow.stage + ": " + message)
+        // Preserve the failing stage in the process exit code so release GUI builds remain
+        // diagnosable even when Qt does not attach QML logging to stdout/stderr.
+        Qt.exit(ok ? 0 : 20 + smokeWindow.stage)
     }
     Timer {
         id: probe
@@ -25,7 +28,7 @@ Main {
             smokeWindow.ticks++
             const p = smokeWindow.playbackController
             if (smokeWindow.ticks > 100) {
-                smokeWindow.finish(false, "timeout at stage " + smokeWindow.stage + " / " + p.statusText)
+                smokeWindow.finish(false, "timeout / " + p.statusText)
                 return
             }
             if (smokeWindow.mediaUrl.length === 0) {
@@ -43,9 +46,16 @@ Main {
                 break
             case 1:
                 if (p.playing && p.positionMs >= 300) {
-                    p.requestVolume(65)
-                    p.toggleMute()
-                    smokeWindow.stage = 2
+                    if (smokeWindow.skipMixerChecks) {
+                        // A dummy/headless audio sink has no real mixer. Still validate that
+                        // playback itself advances and can transition cleanly into pause.
+                        p.playPause()
+                        smokeWindow.stage = 3
+                    } else {
+                        p.requestVolume(65)
+                        p.toggleMute()
+                        smokeWindow.stage = 2
+                    }
                 }
                 break
             case 2:
@@ -85,7 +95,7 @@ Main {
                 smokeWindow.stage = 8
                 break
             case 8:
-                smokeWindow.finish(true, "audio transport and window transitions")
+                smokeWindow.finish(true, "play, pause, seek, resume, stop, and window transitions")
                 break
             }
         }
