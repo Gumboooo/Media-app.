@@ -18,7 +18,10 @@ VideoSurface::VideoSurface(QObject* parent)
     // surface (for example after resource release), which eventFilter reports to QML so libVLC
     // can be rebound to the new handle.
     m_window->create();
-    if (m_nativeHandle == 0 && m_window->handle()) {
+    if (m_nativeHandle == 0) {
+        // create() has completed, so winId() observes the existing platform window rather than
+        // creating one from a property read. SurfaceCreated normally populated the cache already;
+        // this is only a defensive fallback for platforms with different event timing.
         m_nativeHandle = static_cast<qulonglong>(m_window->winId());
     }
 }
