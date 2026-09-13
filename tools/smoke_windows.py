@@ -26,7 +26,10 @@ for name, args in [("startup", []), ("audio-transport", ["--smoke-media", fixtur
         run = subprocess.run(cmd, cwd=bundle, env=env, capture_output=True, text=True,
                              encoding="utf-8", errors="replace", timeout=30)
         log = run.stdout + run.stderr
-        passed = run.returncode == 0 and "APERTURE_SMOKE_OK" in log
+        # Smoke.qml reports probe success/failure through Qt.exit(), and main propagates that
+        # event-loop result to the Windows process. Console output is diagnostic only because
+        # GUI-subsystem release builds are not required to expose QML logging to stdio.
+        passed = run.returncode == 0
         if "Binding loop" in log or "ReferenceError" in log or "TypeError" in log:
             passed = False
         results.append({"test": name, "exit_code": run.returncode, "passed": passed})
