@@ -19,6 +19,10 @@ env = dict(os.environ)
 env["PATH"] = os.pathsep.join(p for p in env.get("PATH", "").split(os.pathsep) if "qt" not in p.lower())
 for key in ("QT_PLUGIN_PATH", "QML2_IMPORT_PATH", "QML_IMPORT_PATH", "APERTURE_LIBVLC_PATH"):
     env.pop(key, None)
+# GitHub-hosted Windows runners have no default audio endpoint. Aperture's backend recognizes
+# this development-only flag and asks libVLC for its dummy audio sink, preserving the playback
+# clock and transport behavior without changing normal user audio output.
+env["APERTURE_TEST_DUMMY_AUDIO"] = "1"
 results = []
 for name, args in [("startup", []), ("audio-transport", ["--smoke-media", fixture.as_uri()])]:
     cmd = [str(bundle / "aperture.exe"), "--smoke-test", *args]
