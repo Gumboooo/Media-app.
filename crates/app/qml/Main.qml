@@ -30,10 +30,9 @@ ApplicationWindow {
 
     VideoSurface {
         id: videoSurface
-        onNativeHandleChanged: {
-            if (nativeHandle !== 0)
-                player.attachVideoSurface(nativeHandle)
-        }
+        // Forward both creation and destruction. A zero handle tells the backend to detach from
+        // the old native surface before Qt destroys/recreates it.
+        onNativeHandleChanged: player.attachVideoSurface(nativeHandle)
     }
 
     FileDialog {
