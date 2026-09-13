@@ -8,7 +8,8 @@
 // A deliberately tiny native child window. libVLC renders directly to this platform window,
 // while Qt Quick WindowContainer handles geometry and embedding. No decoded frame copies pass
 // through QML.
-class VideoSurface final : public QObject
+// Qt 6.8's QML registration creates a derived wrapper for this type.
+class VideoSurface : public QObject
 {
     Q_OBJECT
     QML_ELEMENT
