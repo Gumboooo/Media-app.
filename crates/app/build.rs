@@ -11,6 +11,8 @@ fn main() {
         .qml_files([
             "qml/components/AppButton.qml",
             "qml/components/AppSlider.qml",
+            "qml/components/IconGlyph.qml",
+            "qml/components/IconButton.qml",
             "qml/components/ControlBar.qml",
             "qml/components/PlayerTimeline.qml",
             "qml/components/InfoField.qml",
