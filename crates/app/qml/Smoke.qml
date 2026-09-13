@@ -12,9 +12,9 @@ Main {
     function finish(ok, message) {
         probe.stop()
         playbackController.shutdown()
-        if (ok) console.info("APERTURE_SMOKE_OK " + message)
-        else console.error("APERTURE_SMOKE_FAILED " + message)
-        Qt.quit()
+        if (ok) console.info("Aperture smoke passed: " + message)
+        else console.error("Aperture smoke failed: " + message)
+        Qt.exit(ok ? 0 : 1)
     }
     Timer {
         id: probe
