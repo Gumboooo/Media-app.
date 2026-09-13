@@ -1,3 +1,5 @@
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod player_controller;
 
 use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QUrl};
