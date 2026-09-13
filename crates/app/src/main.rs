@@ -44,6 +44,11 @@ fn main() -> std::process::ExitCode {
         return std::process::ExitCode::FAILURE;
     }
 
-    app_ref.exec();
-    std::process::ExitCode::SUCCESS
+    // Preserve Qt's event-loop success/failure contract. Smoke.qml deliberately uses
+    // Qt.exit(nonzero) on a failed probe, and CI must observe that as a failed process.
+    if app_ref.exec() == 0 {
+        std::process::ExitCode::SUCCESS
+    } else {
+        std::process::ExitCode::FAILURE
+    }
 }
