@@ -1,5 +1,5 @@
 import QtQuick
-import QtQuick.Controls
+import QtQuick.Controls.Basic
 
 // One Action instance per command, shared by controls and shortcuts.
 QtObject {
