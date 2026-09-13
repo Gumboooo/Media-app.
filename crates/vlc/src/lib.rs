@@ -81,7 +81,19 @@ impl VlcPlayer {
         // optional artwork/metadata lookups behind the user's back.
         let no_title = c"--no-video-title-show";
         let no_metadata_network = c"--no-metadata-network-access";
-        let args = [no_title.as_ptr(), no_metadata_network.as_ptr()];
+        let dummy_audio = c"--aout=dummy";
+        let mut args = vec![no_title.as_ptr(), no_metadata_network.as_ptr()];
+
+        // GitHub-hosted Windows runners have no default audio endpoint. VideoLAN uses the dummy
+        // audio output for its own headless player tests, so our packaged smoke test can request
+        // the same sink without changing normal application playback or media quality.
+        if matches!(
+            std::env::var("APERTURE_TEST_DUMMY_AUDIO"),
+            Ok(value) if value == "1"
+        ) {
+            args.push(dummy_audio.as_ptr());
+        }
+
         let instance = unsafe { (api.new)(args.len() as i32, args.as_ptr()) };
         if instance.is_null() {
             return Err(VlcError::InstanceCreation(api.last_error()));
