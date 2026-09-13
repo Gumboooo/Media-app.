@@ -23,6 +23,27 @@ for key in ("QT_PLUGIN_PATH", "QML2_IMPORT_PATH", "QML_IMPORT_PATH", "APERTURE_L
 # this development-only flag and asks libVLC for its dummy audio sink, preserving the playback
 # clock and transport behavior without changing normal user audio output.
 env["APERTURE_TEST_DUMMY_AUDIO"] = "1"
+
+BACKEND_FAILURES = {
+    41: "library-not-found",
+    42: "missing-symbol",
+    43: "unsupported-version",
+    44: "instance-creation",
+    45: "player-creation",
+    46: "file-access",
+    47: "not-regular-file",
+    48: "invalid-path",
+    49: "media-creation",
+    50: "playback-start",
+    51: "invalid-volume",
+    52: "worker-spawn",
+    53: "command-queue-full",
+    54: "worker-disconnected",
+    55: "worker-failed",
+    56: "playback-start-timeout",
+    57: "unclassified-backend-error",
+}
+
 results = []
 tests = [
     ("startup", []),
@@ -37,14 +58,14 @@ for name, args in tests:
         run = subprocess.run(cmd, cwd=bundle, env=env, capture_output=True, text=True,
                              encoding="utf-8", errors="replace", timeout=30)
         log = run.stdout + run.stderr
-        # Smoke.qml reports probe success/failure through Qt.exit(), and main propagates that
-        # event-loop result to the Windows process. Failed stages are encoded as 20 + stage.
         passed = run.returncode == 0
         if "Binding loop" in log or "ReferenceError" in log or "TypeError" in log:
             passed = False
         result = {"test": name, "exit_code": run.returncode, "passed": passed}
-        if not passed and 20 <= run.returncode <= 40:
+        if not passed and 20 <= run.returncode <= 28:
             result["failed_stage"] = run.returncode - 20
+        if not passed and run.returncode in BACKEND_FAILURES:
+            result["backend_failure"] = BACKEND_FAILURES[run.returncode]
         results.append(result)
     except subprocess.TimeoutExpired:
         log = "Timed out after 30 seconds; test process was terminated."
