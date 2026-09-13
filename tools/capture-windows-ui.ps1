@@ -21,12 +21,29 @@ $screenshot = Join-Path $Evidence 'ui-empty-state.png'
 $stdout = Join-Path $Evidence 'ui-empty-state.stdout.log'
 $stderr = Join-Path $Evidence 'ui-empty-state.stderr.log'
 $metadata = Join-Path $Evidence 'ui-empty-state.json'
+$peHeadersLog = Join-Path $Evidence 'aperture-pe-headers.txt'
 
 if (!(Test-Path $exe)) {
     throw "Packaged Aperture executable not found: $exe"
 }
 New-Item -ItemType Directory -Force $Evidence | Out-Null
-Remove-Item $screenshot, $stdout, $stderr, $metadata -Force -ErrorAction SilentlyContinue
+Remove-Item $screenshot, $stdout, $stderr, $metadata, $peHeadersLog -Force -ErrorAction SilentlyContinue
+
+# A release desktop application must use the GUI subsystem. A console-subsystem regression is not
+# cosmetic: Windows will create the black terminal window that exposed internal Qt/VLC logs in the
+# previous installer. Keep the full PE headers as build evidence and fail before launch if wrong.
+$peHeaders = (& dumpbin.exe /HEADERS $exe 2>&1 | Out-String)
+$dumpbinExit = $LASTEXITCODE
+$peHeaders | Out-File $peHeadersLog -Encoding utf8
+if ($dumpbinExit) {
+    throw "dumpbin failed while validating aperture.exe (exit code $dumpbinExit)."
+}
+if ($peHeaders -notmatch '(?i)\bsubsystem\s+\(Windows GUI\)') {
+    throw 'Release aperture.exe is not linked as a Windows GUI-subsystem application.'
+}
+if ($peHeaders -match '(?i)\bsubsystem\s+\(Windows CUI\)') {
+    throw 'Release aperture.exe unexpectedly declares the Windows console subsystem.'
+}
 
 Add-Type @'
 using System;
@@ -130,6 +147,7 @@ try {
         Width = $width
         Height = $height
         Bytes = (Get-Item $screenshot).Length
+        GuiSubsystemVerified = $true
     } | ConvertTo-Json | Out-File $metadata -Encoding utf8
     $captured = $true
 } finally {
