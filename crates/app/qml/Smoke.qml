@@ -9,6 +9,7 @@ Main {
     property int mediaArg: Qt.application.arguments.indexOf("--smoke-media")
     property string mediaUrl: mediaArg >= 0 ? Qt.application.arguments[mediaArg + 1] : ""
     property bool skipMixerChecks: Qt.application.arguments.indexOf("--smoke-no-mixer") >= 0
+    property bool closeDuringPlayback: Qt.application.arguments.indexOf("--smoke-close-while-playing") >= 0
 
     function backendFailureCode(message) {
         if (message.indexOf("libVLC could not be found") >= 0) return 41
@@ -66,6 +67,14 @@ Main {
                 break
             case 1:
                 if (p.playing && p.positionMs >= 300) {
+                    if (smokeWindow.closeDuringPlayback) {
+                        // Do not call the blocking test-only shutdown helper here. Closing the real
+                        // window must exercise Main.qml's beginShutdown()/pollShutdown() path and
+                        // naturally terminate the process when the last window is finally accepted.
+                        probe.stop()
+                        smokeWindow.close()
+                        return
+                    }
                     if (smokeWindow.skipMixerChecks) {
                         // A dummy/headless audio sink has no real mixer. Still validate that
                         // playback itself advances and can transition cleanly into pause.
