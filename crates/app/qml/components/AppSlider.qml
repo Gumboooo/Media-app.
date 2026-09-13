@@ -1,9 +1,10 @@
 import QtQuick
-import QtQuick.Controls
+import QtQuick.Controls.Basic as Basic
 import org.aperture.player
 
-Slider {
+Basic.Slider {
     id: control
+    implicitHeight: Theme.sliderHitHeight
 
     background: Rectangle {
         x: control.leftPadding
@@ -11,13 +12,13 @@ Slider {
         width: control.availableWidth
         height: Theme.sliderTrackHeight
         radius: height / 2
-        color: Theme.border
+        color: control.enabled ? Theme.sliderTrack : Theme.surfaceDisabled
 
         Rectangle {
             width: control.visualPosition * parent.width
             height: parent.height
             radius: parent.radius
-            color: control.enabled ? Theme.accent : Theme.textMuted
+            color: control.enabled ? Theme.accent : Theme.textDisabled
         }
     }
 
@@ -27,9 +28,9 @@ Slider {
         implicitWidth: control.pressed ? Theme.sliderHandlePressedSize : Theme.sliderHandleSize
         implicitHeight: implicitWidth
         radius: width / 2
-        color: control.enabled ? Theme.accent : Theme.textMuted
+        color: control.enabled ? Theme.accent : Theme.textDisabled
         border.width: Theme.borderWidth
-        border.color: control.activeFocus ? Theme.textMuted : Theme.window
+        border.color: control.activeFocus ? Theme.focusBorder : Theme.playerControlSurface
 
         Behavior on implicitWidth {
             NumberAnimation { duration: Theme.motionFast }

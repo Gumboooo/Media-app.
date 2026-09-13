@@ -8,17 +8,18 @@ Rectangle {
     required property var player
     required property var actions
 
-    color: Theme.window
-    implicitHeight: controlsColumn.implicitHeight + Theme.space2 + Theme.space3
+    color: Theme.playerControlSurface
+    implicitHeight: Theme.controlBarHeight
+    border.width: Theme.borderWidth
+    border.color: Theme.border
 
     Column {
-        id: controlsColumn
         anchors.fill: parent
         anchors.leftMargin: Theme.space4
         anchors.rightMargin: Theme.space4
         anchors.topMargin: Theme.space2
-        anchors.bottomMargin: Theme.space3
-        spacing: Theme.space2
+        anchors.bottomMargin: Theme.space2
+        spacing: Theme.space1
 
         PlayerTimeline {
             width: parent.width
@@ -30,65 +31,106 @@ Rectangle {
             height: Theme.transportHeight
             spacing: Theme.space2
 
-            AppButton {
-                action: root.actions.open
+            Item {
+                Layout.fillWidth: true
+                Layout.minimumWidth: 0
+                height: parent.height
+
+                Row {
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Theme.space2
+
+                    IconButton {
+                        action: root.actions.open
+                        iconName: "open"
+                    }
+
+                    Label {
+                        width: Math.min(Theme.statusTextMaxWidth,
+                                        Math.max(0, root.width / 2 - 220))
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: width > 70
+                        text: root.player.statusText
+                        color: Theme.textDim
+                        font.pixelSize: Theme.textTiny
+                        elide: Text.ElideRight
+                    }
+                }
             }
 
-            AppButton {
-                action: root.actions.playPause
+            Row {
+                Layout.alignment: Qt.AlignHCenter | Qt.AlignVCenter
+                spacing: Theme.space1
+
+                IconButton {
+                    action: root.actions.seekBackward
+                    iconName: "seek-back"
+                    toolTipText: "Back 5 seconds"
+                }
+
+                IconButton {
+                    action: root.actions.playPause
+                    iconName: root.player.playing ? "pause" : "play"
+                    prominent: true
+                }
+
+                IconButton {
+                    action: root.actions.stop
+                    iconName: "stop"
+                }
+
+                IconButton {
+                    action: root.actions.seekForward
+                    iconName: "seek-forward"
+                    toolTipText: "Forward 5 seconds"
+                }
             }
 
-            AppButton {
-                action: root.actions.stop
-            }
+            Item {
+                Layout.fillWidth: true
+                Layout.minimumWidth: 0
+                height: parent.height
 
-            AppButton {
-                action: root.actions.mute
-            }
+                Row {
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Theme.space1
 
-            AppSlider {
-                id: volumeSlider
-                Layout.preferredWidth: Theme.volumeSliderWidth
-                from: 0
-                to: 125
-                value: root.player.volume
-                onMoved: root.player.requestVolume(Math.round(value))
-                ToolTip.visible: hovered
-                ToolTip.text: Math.round(value) + "%"
-            }
+                    IconButton {
+                        visible: root.player.audioTrackCount > 1
+                        action: root.actions.audioTrack
+                        iconName: "audio"
+                        toolTipText: root.actions.audioTrack.text
+                    }
 
-            Item { Layout.fillWidth: true }
+                    IconButton {
+                        visible: root.player.subtitleTrackCount > 0
+                        action: root.actions.subtitleTrack
+                        iconName: "subtitles"
+                        toolTipText: root.actions.subtitleTrack.text
+                    }
 
-            Label {
-                Layout.maximumWidth: Theme.statusTextMaxWidth
-                text: root.player.statusText
-                color: Theme.textMuted
-                font.pixelSize: Theme.textSmall
-                elide: Text.ElideRight
-                horizontalAlignment: Text.AlignRight
-            }
-        }
-        RowLayout {
-            width: parent.width
-            visible: root.player.audioTrackCount > 0 || root.player.subtitleTrackCount > 0
-            spacing: Theme.space2
-            AppButton {
-                visible: root.player.audioTrackCount > 0
-                Layout.maximumWidth: Theme.trackButtonMaxWidth
-                action: root.actions.audioTrack
-                ToolTip.visible: hovered
-                ToolTip.text: "Switch audio track"
-            }
+                    IconButton {
+                        action: root.actions.mute
+                        iconName: root.player.muted || root.player.volume === 0 ? "mute" : "volume"
+                    }
 
-            AppButton {
-                visible: root.player.subtitleTrackCount > 0
-                Layout.maximumWidth: Theme.trackButtonMaxWidth
-                action: root.actions.subtitleTrack
-                ToolTip.visible: hovered
-                ToolTip.text: "Switch subtitle track"
+                    AppSlider {
+                        id: volumeSlider
+                        visible: root.width >= 820
+                        width: Theme.volumeSliderWidth
+                        anchors.verticalCenter: parent.verticalCenter
+                        from: 0
+                        to: 125
+                        value: root.player.volume
+                        onMoved: root.player.requestVolume(Math.round(value))
+                        ToolTip.visible: hovered
+                        ToolTip.delay: 350
+                        ToolTip.text: Math.round(value) + "%"
+                    }
+                }
             }
-
-            Item { Layout.fillWidth: true }
         }
     }
 }

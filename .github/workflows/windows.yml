@@ -49,6 +49,11 @@ jobs:
         working-directory: ${{ runner.temp }}/aperture-source
         run: |
           ./tools/windows-build.ps1
+      - name: Verify packaged GUI and capture rendered window
+        shell: pwsh
+        working-directory: ${{ runner.temp }}/aperture-source
+        run: |
+          ./tools/capture-windows-ui.ps1
       - name: Build and smoke-test single-file installer
         shell: pwsh
         working-directory: ${{ runner.temp }}/aperture-source
