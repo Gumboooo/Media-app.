@@ -18,6 +18,12 @@ VideoSurface::VideoSurface(QObject* parent)
     // surface (for example after resource release), which eventFilter reports to QML so libVLC
     // can be rebound to the new handle.
     m_window->create();
+    if (m_nativeHandle == 0) {
+        // create() has completed, so winId() observes the existing platform window rather than
+        // creating one from a property read. SurfaceCreated normally populated the cache already;
+        // this is only a defensive fallback for platforms with different event timing.
+        m_nativeHandle = static_cast<qulonglong>(m_window->winId());
+    }
 }
 
 VideoSurface::~VideoSurface()
@@ -28,17 +34,30 @@ VideoSurface::~VideoSurface()
     }
 }
 
-qulonglong VideoSurface::nativeHandle() const noexcept
-{
-    return m_window ? static_cast<qulonglong>(m_window->winId()) : 0;
-}
-
 bool VideoSurface::eventFilter(QObject* watched, QEvent* event)
 {
     if (watched == m_window && event->type() == QEvent::PlatformSurface) {
         auto* surfaceEvent = static_cast<QPlatformSurfaceEvent*>(event);
-        if (surfaceEvent->surfaceEventType() == QPlatformSurfaceEvent::SurfaceCreated) {
-            emit nativeHandleChanged();
+        switch (surfaceEvent->surfaceEventType()) {
+        case QPlatformSurfaceEvent::SurfaceAboutToBeDestroyed:
+            if (m_nativeHandle != 0) {
+                // Publish invalidation before Qt destroys the platform surface. The player can
+                // detach libVLC from the old HWND/native view instead of leaving it with a stale
+                // handle until a replacement surface eventually appears.
+                m_nativeHandle = 0;
+                emit nativeHandleChanged();
+            }
+            break;
+        case QPlatformSurfaceEvent::SurfaceCreated: {
+            const auto handle = static_cast<qulonglong>(m_window->winId());
+            if (m_nativeHandle != handle) {
+                m_nativeHandle = handle;
+                emit nativeHandleChanged();
+            }
+            break;
+        }
+        default:
+            break;
         }
     }
     return QObject::eventFilter(watched, event);

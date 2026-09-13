@@ -125,6 +125,15 @@ tests = [
         "audio-transport",
         ["--smoke-media", fixture.as_uri(), "--smoke-no-mixer"],
     ),
+    (
+        "close-during-playback",
+        [
+            "--smoke-media",
+            fixture.as_uri(),
+            "--smoke-no-mixer",
+            "--smoke-close-while-playing",
+        ],
+    ),
 ]
 for name, args in tests:
     cmd = [str(bundle / "aperture.exe"), "--smoke-test", *args]

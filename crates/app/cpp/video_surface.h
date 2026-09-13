@@ -21,7 +21,7 @@ public:
     ~VideoSurface() override;
 
     QWindow* window() const noexcept { return m_window; }
-    qulonglong nativeHandle() const noexcept;
+    qulonglong nativeHandle() const noexcept { return m_nativeHandle; }
 
 signals:
     void nativeHandleChanged();
@@ -31,4 +31,8 @@ protected:
 
 private:
     QWindow* m_window = nullptr;
+    // Cache the platform handle instead of calling winId() from the property getter. Calling
+    // winId() while a platform surface is being destroyed can itself force native resources
+    // back into existence, which is exactly what this lifecycle signal must avoid.
+    qulonglong m_nativeHandle = 0;
 };
