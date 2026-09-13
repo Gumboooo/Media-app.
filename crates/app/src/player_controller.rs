@@ -109,6 +109,7 @@ pub struct PlayerControllerRust {
     error_text: QString,
     backend: Option<VlcWorker>,
     native_video_handle: Option<u64>,
+    pending_media: Option<MediaSource>,
     media_info_revision: u64,
     audio_tracks: Vec<MediaTrack>,
     subtitle_tracks: Vec<MediaTrack>,
@@ -138,6 +139,7 @@ impl Default for PlayerControllerRust {
             error_text: QString::default(),
             backend: None,
             native_video_handle: None,
+            pending_media: None,
             media_info_revision: 0,
             audio_tracks: Vec::new(),
             subtitle_tracks: Vec::new(),
@@ -179,7 +181,7 @@ impl qobject::PlayerController {
         }
         if self.rust().backend.is_none() {
             let target = self.rust().native_video_handle.map(video_target);
-            match VlcWorker::spawn(target, (*self.volume()), (*self.muted())) {
+            match VlcWorker::spawn(target, *self.volume(), *self.muted()) {
                 Ok(backend) => {
                     self.as_mut().rust_mut().backend = Some(backend);
                 }
@@ -200,13 +202,15 @@ impl qobject::PlayerController {
 
         match result {
             Ok(()) => {
+                // Queue acceptance is not media-open success. Keep the requested source private
+                // until refresh() observes a settled, non-error worker result. This also means
+                // rapid A -> B requests can only commit B after both queued commands settle.
+                self.as_mut().rust_mut().pending_media =
+                    Some(MediaSource::local_file(path));
                 self.as_mut().reset_media_info();
-                let source = MediaSource::local_file(path.clone());
-                self.as_mut()
-                    .set_media_title(QString::from(&source.display_name()));
-                let path_text = path.to_string_lossy().into_owned();
-                self.as_mut().set_media_path(QString::from(&path_text));
-                self.as_mut().set_has_media(true);
+                self.as_mut().set_media_title(QString::default());
+                self.as_mut().set_media_path(QString::default());
+                self.as_mut().set_has_media(false);
                 self.as_mut().set_playing(false);
                 self.as_mut().set_polling_active(true);
                 self.as_mut().set_status_text(QString::from("Opening…"));
@@ -350,6 +354,14 @@ impl qobject::PlayerController {
             return;
         }
         let snapshot = report.snapshot;
+        let failed = report.error.is_some() || snapshot.state == PlaybackState::Error;
+
+        if failed {
+            // Never publish a requested file as loaded when its settled worker result failed.
+            self.as_mut().rust_mut().pending_media = None;
+        } else if self.rust().pending_media.is_some() {
+            self.as_mut().commit_pending_media();
+        }
 
         if let Some(error) = report.error {
             self.as_mut().set_error_text(QString::from(&error));
@@ -415,7 +427,24 @@ impl qobject::PlayerController {
         self.as_mut().set_polling_active(false);
         self.as_mut().set_playing(false);
         self.as_mut().set_has_media(false);
+        self.as_mut().rust_mut().pending_media = None;
         self.as_mut().rust_mut().backend.take();
+    }
+
+    fn commit_pending_media(mut self: Pin<&mut Self>) {
+        let pending = self.as_mut().rust_mut().pending_media.take();
+        let Some(source) = pending else {
+            return;
+        };
+
+        let title = source.display_name();
+        let path_text = source
+            .path()
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        self.as_mut().set_media_title(QString::from(&title));
+        self.as_mut().set_media_path(QString::from(&path_text));
+        self.as_mut().set_has_media(true);
     }
 
     fn apply_media_info(mut self: Pin<&mut Self>, info: &MediaRuntimeInfo, revision: u64) {
@@ -486,6 +515,9 @@ impl qobject::PlayerController {
     }
 
     fn set_fatal_error(mut self: Pin<&mut Self>, message: &str) {
+        self.as_mut().rust_mut().pending_media = None;
+        self.as_mut().set_has_media(false);
+        self.as_mut().set_playing(false);
         self.as_mut().set_error_text(QString::from(message));
         self.as_mut().set_status_text(QString::from("Playback error"));
     }
