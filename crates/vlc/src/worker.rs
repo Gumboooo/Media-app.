@@ -127,6 +127,32 @@ impl VlcWorker {
         self.join.as_ref().is_none_or(|join| join.is_finished())
     }
 
+    /// Request cancellation without joining the native thread.
+    ///
+    /// This is the UI-close fast path: it wakes an idle receiver and makes the worker skip stale
+    /// queued work, while allowing Qt to keep pumping events until libVLC has released its native
+    /// window references. `finish_shutdown()` performs the eventual non-blocking reap.
+    pub fn begin_shutdown(&mut self) {
+        self.stopping.store(true, Ordering::Release);
+        if let Some(commands) = self.commands.take() {
+            let _ = commands.try_send(Command::Shutdown);
+            drop(commands);
+        }
+    }
+
+    /// Reap a previously cancelled worker only after the native thread has actually exited.
+    /// Returns `false` without blocking while a native call is still unwinding.
+    pub fn finish_shutdown(&mut self) -> bool {
+        self.begin_shutdown();
+        if !self.is_finished() {
+            return false;
+        }
+        if let Some(join) = self.join.take() {
+            let _ = join.join();
+        }
+        true
+    }
+
     pub fn seek_to_ms(&self, position_ms: i64) -> Result<(), VlcError> {
         self.try_command(Command::Seek(position_ms.max(0)))
     }
@@ -191,14 +217,9 @@ impl VlcWorker {
 
 impl Drop for VlcWorker {
     fn drop(&mut self) {
-        // Cancellation bypasses queue capacity. Wake an idle receiver, then skip all stale
-        // queued commands. Join still protects native-window lifetime; a hung native call
-        // requires future process isolation, not unsafe thread detachment.
-        self.stopping.store(true, Ordering::Release);
-        if let Some(commands) = self.commands.take() {
-            let _ = commands.try_send(Command::Shutdown);
-            drop(commands);
-        }
+        // Drop remains the last-resort safety net. Normal window close uses begin_shutdown() and
+        // finish_shutdown() first so this join is already complete and cannot freeze the Qt UI.
+        self.begin_shutdown();
         if let Some(join) = self.join.take() {
             let _ = join.join();
         }
@@ -491,6 +512,16 @@ mod tests {
         assert!(should_poll(true, PlaybackState::Stopped));
         assert!(!should_poll(false, PlaybackState::Paused));
         assert!(should_poll(false, PlaybackState::Playing));
+    }
+
+    #[test]
+    fn begin_shutdown_disconnects_new_commands_without_joining() {
+        let (mut worker, _receiver) = harness();
+        worker.begin_shutdown();
+        assert!(worker.stopping.load(Ordering::Acquire));
+        assert!(worker.commands.is_none());
+        assert!(matches!(worker.play(), Err(VlcError::WorkerDisconnected)));
+        assert!(worker.finish_shutdown());
     }
 
     #[test]
