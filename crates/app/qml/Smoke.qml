@@ -10,14 +10,34 @@ Main {
     property string mediaUrl: mediaArg >= 0 ? Qt.application.arguments[mediaArg + 1] : ""
     property bool skipMixerChecks: Qt.application.arguments.indexOf("--smoke-no-mixer") >= 0
 
-    function finish(ok, message) {
+    function backendFailureCode(message) {
+        if (message.indexOf("libVLC could not be found") >= 0) return 41
+        if (message.indexOf("required libVLC symbol is missing") >= 0) return 42
+        if (message.indexOf("supports libVLC 3.x") >= 0) return 43
+        if (message.indexOf("create a player instance") >= 0) return 44
+        if (message.indexOf("create a media player") >= 0) return 45
+        if (message.indexOf("file could not be read") >= 0) return 46
+        if (message.indexOf("path is not a regular file") >= 0) return 47
+        if (message.indexOf("path cannot be represented safely") >= 0) return 48
+        if (message.indexOf("could not create media") >= 0) return 49
+        if (message.indexOf("could not start playback") >= 0) return 50
+        if (message.indexOf("rejected the requested volume") >= 0) return 51
+        if (message.indexOf("worker thread could not be started") >= 0) return 52
+        if (message.indexOf("command queue is busy") >= 0) return 53
+        if (message.indexOf("worker is no longer running") >= 0) return 54
+        if (message.indexOf("playback backend stopped") >= 0) return 55
+        if (message.indexOf("Timed out while starting playback") >= 0) return 56
+        return 57
+    }
+
+    function finish(ok, message, exitCode) {
         probe.stop()
         playbackController.shutdown()
         if (ok) console.info("Aperture smoke passed: " + message)
         else console.error("Aperture smoke failed at stage " + smokeWindow.stage + ": " + message)
-        // Preserve the failing stage in the process exit code so release GUI builds remain
-        // diagnosable even when Qt does not attach QML logging to stdout/stderr.
-        Qt.exit(ok ? 0 : 20 + smokeWindow.stage)
+        // Preserve either the failing probe stage or a typed backend failure in the process exit
+        // code so Windows GUI-subsystem builds remain diagnosable without stdout/stderr.
+        Qt.exit(ok ? 0 : (exitCode === undefined ? 20 + smokeWindow.stage : exitCode))
     }
     Timer {
         id: probe
@@ -36,7 +56,7 @@ Main {
                 return
             }
             if (p.errorText.length > 0) {
-                smokeWindow.finish(false, p.errorText)
+                smokeWindow.finish(false, p.errorText, smokeWindow.backendFailureCode(p.errorText))
                 return
             }
             switch (smokeWindow.stage) {
