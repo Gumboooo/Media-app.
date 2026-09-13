@@ -15,7 +15,10 @@ try {
     if ($LASTEXITCODE) { throw 'Rust toolchain setup failed.' }
     cargo test -p aperture-core -p aperture-vlc
     if ($LASTEXITCODE) { throw 'Rust core/backend tests failed.' }
-    cargo test -p aperture-app
+
+    # Build the Qt/CXX bridge in the same release profile used for packaging. The subsequent
+    # release build reuses those native artifacts instead of compiling the entire bridge twice.
+    cargo test --release -p aperture-app
     if ($LASTEXITCODE) { throw 'Qt controller tests failed.' }
     cargo build --release -p aperture-app
     if ($LASTEXITCODE) { throw 'Release build failed.' }
@@ -25,10 +28,20 @@ try {
 
     # Official VideoLAN native package; NuGet is only a distribution format, not a .NET runtime.
     $vlcVersion = '3.0.23.1'
+    $expectedVlcSha256 = '70927AFA9AD34B77E7D9A5E6D02CAE099771F6EB3114DA18111A4B76F65B836F'
     $package = Join-Path $projectRoot 'build/libvlc.zip'
     $packageRoot = Join-Path $projectRoot 'build/libvlc-package'
     Invoke-WebRequest "https://api.nuget.org/v3-flatcontainer/videolan.libvlc.windows/$vlcVersion/videolan.libvlc.windows.$vlcVersion.nupkg" -OutFile $package -TimeoutSec 180 -MaximumRetryCount 2
-    Get-FileHash $package -Algorithm SHA256 | Format-List | Out-File (Join-Path $evidence 'libvlc-package-sha256.txt')
+    $actualVlcSha256 = (Get-FileHash $package -Algorithm SHA256).Hash.ToUpperInvariant()
+    [PSCustomObject]@{
+        Version = $vlcVersion
+        ExpectedSHA256 = $expectedVlcSha256
+        ActualSHA256 = $actualVlcSha256
+        Verified = ($actualVlcSha256 -eq $expectedVlcSha256)
+    } | Format-List | Out-File (Join-Path $evidence 'libvlc-package-sha256.txt')
+    if ($actualVlcSha256 -ne $expectedVlcSha256) {
+        throw "Downloaded libVLC package hash mismatch. Expected $expectedVlcSha256 but got $actualVlcSha256."
+    }
     Expand-Archive $package -DestinationPath $packageRoot -Force
     $vlcDlls = @(Get-ChildItem $packageRoot -Recurse -Filter libvlc.dll | Where-Object { $_.FullName.Replace('\', '/') -match '/(x64|win-x64)/' })
     if ($vlcDlls.Count -ne 1) { throw 'Cannot uniquely identify the x64 libVLC runtime.' }
