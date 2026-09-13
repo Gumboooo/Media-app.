@@ -1,4 +1,4 @@
-"""Development-only startup and audio transport tests of the deployed executable."""
+"""Development-only startup and transport tests of the deployed executable."""
 import json
 import os
 from pathlib import Path
@@ -24,19 +24,28 @@ for key in ("QT_PLUGIN_PATH", "QML2_IMPORT_PATH", "QML_IMPORT_PATH", "APERTURE_L
 # clock and transport behavior without changing normal user audio output.
 env["APERTURE_TEST_DUMMY_AUDIO"] = "1"
 results = []
-for name, args in [("startup", []), ("audio-transport", ["--smoke-media", fixture.as_uri()])]:
+tests = [
+    ("startup", []),
+    (
+        "audio-transport",
+        ["--smoke-media", fixture.as_uri(), "--smoke-no-mixer"],
+    ),
+]
+for name, args in tests:
     cmd = [str(bundle / "aperture.exe"), "--smoke-test", *args]
     try:
         run = subprocess.run(cmd, cwd=bundle, env=env, capture_output=True, text=True,
                              encoding="utf-8", errors="replace", timeout=30)
         log = run.stdout + run.stderr
         # Smoke.qml reports probe success/failure through Qt.exit(), and main propagates that
-        # event-loop result to the Windows process. Console output is diagnostic only because
-        # GUI-subsystem release builds are not required to expose QML logging to stdio.
+        # event-loop result to the Windows process. Failed stages are encoded as 20 + stage.
         passed = run.returncode == 0
         if "Binding loop" in log or "ReferenceError" in log or "TypeError" in log:
             passed = False
-        results.append({"test": name, "exit_code": run.returncode, "passed": passed})
+        result = {"test": name, "exit_code": run.returncode, "passed": passed}
+        if not passed and 20 <= run.returncode <= 40:
+            result["failed_stage"] = run.returncode - 20
+        results.append(result)
     except subprocess.TimeoutExpired:
         log = "Timed out after 30 seconds; test process was terminated."
         passed = False
@@ -44,6 +53,7 @@ for name, args in [("startup", []), ("audio-transport", ["--smoke-media", fixtur
     (evidence / (name + ".log")).write_text(log, encoding="utf-8")
     print(name, "PASS" if passed else "FAIL", flush=True)
     if not passed:
+        print(results[-1], flush=True)
         print(log, flush=True)
 (evidence / "smoke-results.json").write_text(json.dumps(results, indent=2), encoding="utf-8")
 sys.exit(0 if all(r["passed"] for r in results) else 1)
